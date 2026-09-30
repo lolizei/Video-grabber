@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Video Grabber</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="popup">
+  <header>
+    <strong>Video Grabber</strong>
+    <span id="count" class="muted"></span>
+  </header>
+  <div id="tip" class="tip" hidden></div>
+  <div id="list"></div>
+  <div id="preview" hidden><video controls playsinline></video><span class="close">✕ Close</span></div>
+  <p id="empty" class="muted empty" hidden>No videos detected yet.<br>Start playing the video, then reopen this popup.</p>
+  <footer>
+    <button id="ytdlp" class="ghost" title="Copy a yt-dlp command for this page">Copy yt-dlp command</button>
+    <button id="refresh" class="ghost">Refresh</button>
+    <button id="clear" class="ghost">Clear</button>
+  </footer>
+  <script src="config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

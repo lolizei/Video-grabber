@@ -1,0 +1,13 @@
+# build output
+dist/
+*.zip
+*.crx
+*.pem
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+node_modules/

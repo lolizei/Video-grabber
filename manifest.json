@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Video Grabber",
+  "version": "1.2.0",
+  "description": "Find the videos on any page and download them in one click. Supports MP4, WebM, HLS streams and Instagram reels.",
+  "homepage_url": "https://github.com/lolizei/Video-grabber",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "webRequest",
+    "downloads",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Video Grabber",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}
