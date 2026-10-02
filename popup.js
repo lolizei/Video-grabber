@@ -330,6 +330,7 @@ async function load() {
 }
 
 $('#refresh').onclick = load;
+window.addEventListener('scanner.videoRefresh', load);
 $('#clear').onclick = async () => {
   await chrome.runtime.sendMessage({ cmd: 'clear', tabId: tab.id });
   $('#list').innerHTML = '';

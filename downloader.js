@@ -5,15 +5,28 @@ const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 const mode = params.get('mode');
 const srcUrl = params.get('url');
-let name = params.get('name') || 'video.mp4';
+let name = MediaTools.filename(params.get('name') || 'video.mp4');
 const knownSize = Number(params.get('size')) || 0;
+const jobId = params.get('job');
+const sourceTab = params.has('sourceTab') ? Number(params.get('sourceTab')) : undefined;
+let jobProgress = 0, jobMessage = 'Starting…', lastReport = 0;
+async function report(status = 'running', force = false) {
+  if (!jobId || (!force && Date.now() - lastReport < 300)) return;
+  lastReport = Date.now();
+  try {
+    await chrome.runtime.sendMessage({ cmd: 'scanner.progress', id: jobId, status, progress: jobProgress, message: jobMessage });
+  } catch { /* A page reload can temporarily restart the service worker. */ }
+}
 
 const fmt = n => n > 1 << 30 ? (n / (1 << 30)).toFixed(2) + ' GB' : (n / (1 << 20)).toFixed(1) + ' MB';
 const log = m => { $('#log').textContent += m + '\n'; };
-const setStatus = m => { $('#status').textContent = m; };
+const setStatus = m => { $('#status').textContent = m; jobMessage = m; report(); };
 const setProgress = (frac, text) => {
   $('#bar').style.width = Math.min(100, frac * 100).toFixed(1) + '%';
   $('#progress').textContent = text || '';
+  jobProgress = frac;
+  if (text) jobMessage = text;
+  report();
 };
 $('#name').textContent = name;
 document.title = 'Downloading – ' + name;
@@ -21,8 +34,20 @@ document.title = 'Downloading – ' + name;
 async function fetchRetry(url, opts = {}, tries = 4) {
   for (let i = 1; ; i++) {
     try {
-      const r = await fetch(url, { credentials: 'include', ...opts });
-      if (!r.ok && r.status !== 206) throw new Error('HTTP ' + r.status);
+      let r;
+      try {
+        r = await fetch(url, { credentials: 'include', ...opts, signal: AbortSignal.timeout(30000) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+      } catch (error) {
+        if (sourceTab === undefined) throw error;
+        const reply = await chrome.runtime.sendMessage({ cmd: 'scanner.fetch', tabId: sourceTab,
+          frameId: Number(params.get('frame')) || 0, referrer: params.get('referrer'), url, range: opts.headers?.Range });
+        if (!reply?.ok) throw new Error(reply?.error || error.message);
+        const result = reply.result;
+        r = new Response(Uint8Array.from(atob(result.data), c => c.charCodeAt(0)), { status: result.status, headers: result.headers });
+        Object.defineProperty(r, 'url', { value: result.url });
+      }
+      if (opts.headers?.Range && r.status !== 206) throw new Error('Server ignored the requested byte range.');
       return r;
     } catch (e) {
       if (i >= tries) throw e;
@@ -33,10 +58,14 @@ async function fetchRetry(url, opts = {}, tries = 4) {
 
 async function pool(items, limit, fn) {
   const out = new Array(items.length);
-  let next = 0;
+  let next = 0, failure;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); }
+    while (next < items.length && !failure) {
+      const i = next++;
+      try { out[i] = await fn(items[i], i); } catch (error) { failure = error; }
+    }
   }));
+  if (failure) throw failure;
   return out;
 }
 
@@ -137,13 +166,10 @@ async function chunked() {
 }
 
 // ---------------- HLS ----------------
-const attr = (line, key) => {
-  const m = line.match(new RegExp(key + '=("([^"]*)"|[^,]*)'));
-  return m ? (m[2] ?? m[1]) : null;
-};
+const attr = PlaylistTools.attr;
 
 function parseMaster(text, base) {
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(/\r?\n/).map(line => line.trim());
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
@@ -164,34 +190,7 @@ function parseMaster(text, base) {
   return out.sort((a, b) => b.bw - a.bw);
 }
 
-function parseMedia(text, base) {
-  const lines = text.split(/\r?\n/);
-  const segs = [];
-  let init = null, encrypted = false, nextRange = null, lastEnd = 0;
-  const parseRange = (spec, prevEnd) => {
-    const [len, off] = spec.split('@').map(Number);
-    const start = Number.isFinite(off) ? off : prevEnd;
-    return [start, start + len - 1];
-  };
-  for (const raw of lines) {
-    const l = raw.trim();
-    if (!l) continue;
-    if (l.startsWith('#EXT-X-KEY')) {
-      const method = attr(l, 'METHOD');
-      if (method && method !== 'NONE') encrypted = true;
-    } else if (l.startsWith('#EXT-X-MAP')) {
-      const br = attr(l, 'BYTERANGE');
-      init = { url: new URL(attr(l, 'URI'), base).href, range: br ? parseRange(br, 0) : null };
-    } else if (l.startsWith('#EXT-X-BYTERANGE:')) {
-      nextRange = parseRange(l.split(':')[1], lastEnd);
-    } else if (!l.startsWith('#')) {
-      segs.push({ url: new URL(l, base).href, range: nextRange });
-      if (nextRange) lastEnd = nextRange[1] + 1;
-      nextRange = null;
-    }
-  }
-  return { segs, init, encrypted, ended: text.includes('#EXT-X-ENDLIST') };
-}
+const parseMedia = PlaylistTools.parseMedia;
 
 function chooseVariant(variants) {
   return new Promise(resolve => {
@@ -213,34 +212,58 @@ function chooseVariant(variants) {
 
 async function hls() {
   let url = srcUrl;
-  let text = await (await fetchRetry(url)).text();
-  if (!text.startsWith('#EXTM3U')) throw new Error('Not a valid HLS playlist.');
-
-  if (text.includes('#EXT-X-STREAM-INF')) {
+  let text;
+  for (let depth = 0; ; depth++) {
+    if (depth > 5) throw new Error('Too many nested playlists.');
+    const response = await fetchRetry(url);
+    url = response.url || url;
+    text = (await response.text()).trim();
+    if (!text.startsWith('#EXTM3U')) throw new Error('Not a valid HLS playlist.');
+    const protectedBy = PlaylistTools.protection(text);
+    if (protectedBy) throw new Error('Protected stream: ' + protectedBy);
+    if (!text.includes('#EXT-X-STREAM-INF')) break;
     const variants = parseMaster(text, url);
-    const v = variants.length === 1 ? variants[0] : await chooseVariant(variants);
+    if (!variants.length) throw new Error('Playlist contains no variants.');
+    const v = variants.length === 1 || params.get('auto') === '1' ? variants[0] : await chooseVariant(variants);
     if (v.audio) name = name.replace(/\.\w+$/, ' [audio].ts');
+    if (v.hasSeparateAudio) log('This variant has a separate audio playlist. This download contains video only; download the audio playlist separately.');
     url = v.url;
-    text = await (await fetchRetry(url)).text();
   }
 
-  const { segs, init, encrypted, ended } = parseMedia(text, url);
-  if (encrypted) throw new Error('This stream is encrypted, so it can\'t be downloaded with this extension.');
+  const { segs, init, ended } = parseMedia(text, url);
   if (!segs.length) throw new Error('Playlist contains no segments.');
   if (!ended) log('Note: this looks like a live stream. Only the segments currently listed will be saved.');
 
   const fmp4 = !!init || /\.(m4s|mp4|cmfv)(\?|$)/i.test(segs[0].url);
-  if (fmp4) name = name.replace(/\.ts$/, '.mp4');
+  if (fmp4) name = name.replace(/\.[^/.]+$/, '') + '.mp4';
   $('#name').textContent = name;
 
+  const keys = new Map();
+  const fetchBytes = async (target, options = {}) => {
+    for (let attempt = 1; ; attempt++) {
+      try { return await (await fetchRetry(target, options, 1)).arrayBuffer(); }
+      catch (error) {
+        if (attempt >= 4) throw error;
+        await new Promise(resolve => setTimeout(resolve, 600 * attempt));
+      }
+    }
+  };
   const get = async s => {
     const opts = s.range ? { headers: { Range: `bytes=${s.range[0]}-${s.range[1]}` } } : {};
-    return (await fetchRetry(s.url, opts)).arrayBuffer();
+    const bytes = await fetchBytes(s.url, opts);
+    if (!s.encryption) return bytes;
+    const keyUrl = s.encryption.url;
+    if (!keys.has(keyUrl)) keys.set(keyUrl, (async () => {
+      const raw = await fetchBytes(keyUrl);
+      if (raw.byteLength !== 16) throw new Error('AES-128 key must contain exactly 16 bytes.');
+      return crypto.subtle.importKey('raw', raw, 'AES-CBC', false, ['decrypt']);
+    })());
+    return crypto.subtle.decrypt({ name: 'AES-CBC', iv: s.encryption.iv }, await keys.get(keyUrl), bytes);
   };
 
   setStatus(`Downloading ${segs.length} segments…`);
   let done = 0, bytes = 0;
-  const parts = await pool(segs, 6, async s => {
+  const parts = await pool(segs, 3, async s => {
     const b = await get(s);
     done++; bytes += b.byteLength;
     setProgress(done / segs.length, `${done} / ${segs.length} segments · ${fmt(bytes)}`);
@@ -251,15 +274,59 @@ async function hls() {
   else await saveTs(parts);
 }
 
+async function direct() {
+  if (mode === 'raw-playlist') {
+    setStatus('Downloading original playlist…');
+    const response = await fetchRetry(srcUrl);
+    const text = await response.text();
+    const hls = text.trimStart().startsWith('#EXTM3U');
+    if (!hls && !/<(?:[\w.-]+:)?MPD\b/i.test(text)) throw new Error('Not a valid media playlist.');
+    name = name.replace(/\.[^/.]+$/, '') + (hls ? '.m3u8' : '.mpd');
+    $('#name').textContent = name;
+    await save(new Blob([text], { type: hls ? 'application/vnd.apple.mpegurl' : 'application/dash+xml' }));
+    log('Saved the original playlist only. Protection is retained; media segments and DRM licenses are not downloaded.');
+    setStatus('Original playlist saved ✓ Protection is retained; this is not a playable video download.');
+    return;
+  }
+  setStatus(mode === 'manifest' ? 'Checking DASH protection…' : 'Downloading file…');
+  const response = await fetchRetry(srcUrl);
+  if (mode === 'manifest') {
+    const text = await response.text();
+    if (!/<(?:[\w.-]+:)?MPD\b/i.test(text)) throw new Error('Not a DASH manifest.');
+    const protectedBy = PlaylistTools.protection(text);
+    if (protectedBy) throw new Error('Protected stream: ' + protectedBy);
+    log('Saved the DASH manifest only. DASH audio/video assembly is not supported.');
+    await save(new Blob([text], { type: 'application/dash+xml' }));
+    return;
+  }
+  if (/^(text\/html|application\/(json|xhtml\+xml)|image\/)/i.test(response.headers.get('content-type') || '')) {
+    throw new Error('The URL returned a page or error document instead of media.');
+  }
+  const size = Number(response.headers.get('content-length')) || 0;
+  const parts = [];
+  let bytes = 0;
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value); bytes += value.byteLength;
+    setProgress(size ? bytes / size : 0, size ? `${fmt(bytes)} / ${fmt(size)}` : fmt(bytes));
+  }
+  await save(new Blob(parts, { type: response.headers.get('content-type') || 'application/octet-stream' }));
+}
+
 (async () => {
   try {
     if (mode === 'hls') await hls();
     else if (mode === 'chunked') await chunked();
     else if (mode === 'ts') await saveTs([await (await fetchRetry(srcUrl)).arrayBuffer()]);
+    else if (mode === 'file' || mode === 'manifest' || mode === 'raw-playlist') await direct();
     else throw new Error('Unknown mode.');
+    await report('complete', true);
   } catch (e) {
     setStatus('Failed: ' + (e.message || e));
     log('If the link expired, reload the video page, play it again and retry from the popup.');
     document.title = 'Failed – ' + name;
+    await report(String(e.message).startsWith('Protected stream:') ? 'protected' : 'failed', true);
   }
 })();

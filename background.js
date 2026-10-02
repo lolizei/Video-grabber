@@ -182,6 +182,7 @@ chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId); lastUrl.delete(tab
 
 // ---------- messages from popup ----------
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg.cmd?.startsWith('scanner.')) return;
   (async () => {
     if (msg.cmd === 'list') {
       const list = await getList(msg.tabId);
@@ -213,3 +214,5 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   })();
   return true;
 });
+
+importScripts('shared/media.js', 'shared/playlists.js', 'background/scanner.js');

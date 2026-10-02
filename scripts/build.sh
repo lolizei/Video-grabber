@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' manifest.json | head -1)
-FILES=(manifest.json background.js config.js popup.html popup.js downloader.html downloader.js ts-converter.js vendor style.css icons)
+FILES=(manifest.json background.js config.js popup.html popup.js downloader.html downloader.js ts-converter.js vendor shared background content ui style.css icons)
 
 rm -rf dist
 for build in full store; do

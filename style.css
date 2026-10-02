@@ -53,6 +53,21 @@ button:disabled { opacity: .5; cursor: default; }
 .status.err { color: var(--accent); }
 
 /* downloader page */
+.popup-tabs { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+#video-panel, #media-panel { overflow-y: auto; flex: 1; min-height: 0; }
+[hidden] { display: none !important; }
+#media-panel { padding: 8px 12px; }
+.scanner-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.scanner-filters { display: flex; gap: 4px; }
+.scanner-filters button { font-size: 11px; padding: 4px 8px; border-radius: 16px; }
+.scanner-filters button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#media-summary { margin: 8px 0; font-size: 12px; }
+#media-note { margin: 8px 0; }
+.scanner-title { display: flex; gap: 8px; align-items: baseline; }
+.scanner-title strong { min-width: 0; overflow-wrap: anywhere; }
+.scanner-title span { color: var(--accent); }
+.scanner-item progress { width: 100%; margin-top: 6px; accent-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 body.page { padding: 32px 16px; }
 .wrap { max-width: 640px; margin: 0 auto; }
 .wrap h1 { font-size: 18px; margin: 0 0 4px; }

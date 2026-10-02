@@ -10,16 +10,39 @@
     <strong>Video Grabber</strong>
     <span id="count" class="muted"></span>
   </header>
+  <nav class="popup-tabs" role="tablist" aria-label="Media tools">
+    <button id="video-tab" role="tab" aria-selected="true" aria-controls="video-panel">Video Grabber</button>
+    <button id="media-tab" class="ghost" role="tab" aria-selected="false" aria-controls="media-panel">Media Scanner</button>
+  </nav>
+  <div id="video-panel" role="tabpanel" aria-labelledby="video-tab">
   <div id="tip" class="tip" hidden></div>
   <div id="list"></div>
   <div id="preview" hidden><video controls playsinline></video><span class="close">✕ Close</span></div>
   <p id="empty" class="muted empty" hidden>No videos detected yet.<br>Start playing the video, then reopen this popup.</p>
+  </div>
+  <section id="media-panel" role="tabpanel" aria-labelledby="media-tab" hidden>
+    <div class="scanner-tools">
+      <div class="scanner-filters" aria-label="Filter media">
+        <button class="ghost" data-filter="all" aria-pressed="true">All</button>
+        <button class="ghost" data-filter="audio" aria-pressed="false">Audio</button>
+        <button class="ghost" data-filter="video" aria-pressed="false">Video</button>
+        <button class="ghost" data-filter="playlist" aria-pressed="false">Playlists</button>
+      </div>
+      <button id="media-download-all">Download all</button>
+    </div>
+    <p id="media-summary" class="muted" aria-live="polite"></p>
+    <p id="media-note" class="tip" hidden></p>
+    <ul id="media-list"></ul>
+    <p id="media-empty" class="muted empty">No media detected.<br>Play media or click Refresh to scan links on this page.</p>
+  </section>
   <footer>
     <button id="ytdlp" class="ghost" title="Copy a yt-dlp command for this page">Copy yt-dlp command</button>
     <button id="refresh" class="ghost">Refresh</button>
     <button id="clear" class="ghost">Clear</button>
   </footer>
   <script src="config.js"></script>
+  <script src="shared/media.js"></script>
   <script src="popup.js"></script>
+  <script src="ui/media-tab.js"></script>
 </body>
 </html>

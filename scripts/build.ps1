@@ -7,7 +7,7 @@ Set-Location $root
 
 $version = (Get-Content manifest.json -Raw | ConvertFrom-Json).version
 $files = 'manifest.json', 'background.js', 'config.js', 'popup.html', 'popup.js',
-         'downloader.html', 'downloader.js', 'ts-converter.js', 'vendor', 'style.css', 'icons'
+         'downloader.html', 'downloader.js', 'ts-converter.js', 'vendor', 'shared', 'background', 'content', 'ui', 'style.css', 'icons'
 
 if (Test-Path dist) { Remove-Item dist -Recurse -Force }
 foreach ($build in 'full', 'store') {
