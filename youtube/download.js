@@ -30,10 +30,14 @@
       check();
       try {
         const response=await fetch(url,{credentials:'omit',...options,signal:signal()});
-        if(!response.ok)throw new Error('HTTP '+response.status);
+        if(!response.ok){
+          const fatal=[401,403,404,410].includes(response.status);
+          throw Object.assign(new Error(response.status===403?'HTTP 403: YouTube rejected this track URL. It expired or requires a player token that Video Grabber does not compute. Replay the video and Refresh.'
+            :fatal?'HTTP '+response.status+': the track URL is no longer valid. Replay the video and Refresh.':'HTTP '+response.status),{fatal});
+        }
         return response;
       } catch(error) {
-        check();if(attempt>=4)throw error;
+        check();if(attempt>=4||error.fatal)throw error;
         await new Promise((resolve,reject)=>{
           const timer=setTimeout(()=>{abort.signal.removeEventListener('abort',stop);resolve()},600*attempt);
           const stop=()=>{clearTimeout(timer);reject(new DOMException('Cancelled','AbortError'))};
@@ -50,7 +54,6 @@
       await response.body?.cancel();
     }
     if(!size)throw new Error('The detected track has no usable size. Play the video and refresh its URLs.');
-    if(size>512*1024*1024)throw new Error('This track exceeds the 512 MB local conversion limit. Choose a lower quality.');
     const bytes=new Uint8Array(size);
     const chunk=9*1024*1024;let received=0;
     for(let start=0;start<size;start+=chunk) {
@@ -64,9 +67,18 @@
     }
     return bytes;
   }
+  async function validate(blob) {
+    // Never save or report an output that is empty or structurally invalid.
+    if(globalThis.DownloadEngine){
+      const result=await DownloadEngine.validateOutput(blob,{format:job.output,expectKinds:job.output==='mp4'?['video','audio']:[]});
+      if(!result.ok)throw new Error('Converted output is invalid: '+result.reason);
+    } else if(!blob.size) throw new Error('Converted output is empty.');
+  }
   async function save(bytes) {
     check();phase='saving';await update('Saving…',1,'running',true);
-    const url=URL.createObjectURL(new Blob([bytes],{type:job.output==='mp3'?'audio/mpeg':'video/mp4'}));
+    const blob=new Blob([bytes],{type:job.output==='mp3'?'audio/mpeg':'video/mp4'});
+    await validate(blob);
+    const url=URL.createObjectURL(blob);
     try {
       downloadId=await chrome.downloads.download({url,filename:MediaTools.filename(job.title)+' [YouTube].'+job.output,conflictAction:'uniquify'});
       if(abort.signal.aborted){await chrome.downloads.cancel(downloadId);check();}
@@ -79,6 +91,10 @@
         chrome.downloads.onChanged.addListener(changed);
         chrome.downloads.search({id:downloadId}).then(items=>{if(items[0])changed({id:downloadId,state:{current:items[0].state}})},error=>{chrome.downloads.onChanged.removeListener(changed);reject(error)});
       });
+      const [item]=await chrome.downloads.search({id:downloadId}).catch(()=>[]);
+      const saved=item?.fileSize>0?item.fileSize:item?.bytesReceived;
+      if(item?.exists===false)throw new Error('The saved file no longer exists.');
+      if(saved!==undefined&&saved!==blob.size)throw new Error('Saved file size does not match the converted output.');
     } finally{URL.revokeObjectURL(url);}
   }
   (async()=>{
@@ -90,7 +106,6 @@
       $('#name').textContent=MediaTools.filename(job.title)+' · '+job.output.toUpperCase();
       const streams=Object.entries(job.tracks).filter(([,stream])=>stream);
       const total=streams.reduce((sum,[,stream])=>sum+(stream.size||Number(new URL(stream.url).searchParams.get('clen'))||0),0);
-      if(total>768*1024*1024)throw new Error('These tracks exceed the local conversion memory limit. Choose a lower quality.');
       let completed=0;const files=[];
       for(const [kind,stream]of streams) {
         const bytes=await track(stream,completed,total);completed+=bytes.length;

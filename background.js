@@ -11,16 +11,23 @@ const SEGMENT_EXT = /\.(ts|m4s|cmfv|cmfa|m4f)(\?|#|$)/i;
 const MAX_PER_TAB = 150;
 
 // YouTube itag -> [label, kind]  (kind: v = video only, a = audio only, av = muxed)
+// Unknown itags fall back to the URL's mime parameter, so new formats still classify correctly.
 const ITAGS = {
-  18: ['360p', 'av'], 22: ['720p', 'av'],
+  17: ['144p', 'av'], 18: ['360p', 'av'], 22: ['720p', 'av'], 36: ['240p', 'av'], 43: ['360p', 'av'], 59: ['480p', 'av'],
   160: ['144p', 'v'], 133: ['240p', 'v'], 134: ['360p', 'v'], 135: ['480p', 'v'], 136: ['720p', 'v'],
-  137: ['1080p', 'v'], 264: ['1440p', 'v'], 266: ['2160p', 'v'], 298: ['720p60', 'v'], 299: ['1080p60', 'v'],
+  137: ['1080p', 'v'], 138: ['2160p', 'v'], 264: ['1440p', 'v'], 266: ['2160p', 'v'], 298: ['720p60', 'v'], 299: ['1080p60', 'v'],
   278: ['144p', 'v'], 242: ['240p', 'v'], 243: ['360p', 'v'], 244: ['480p', 'v'], 247: ['720p', 'v'],
-  248: ['1080p', 'v'], 271: ['1440p', 'v'], 313: ['2160p', 'v'], 302: ['720p60', 'v'], 303: ['1080p60', 'v'],
-  308: ['1440p60', 'v'], 315: ['2160p60', 'v'],
+  248: ['1080p', 'v'], 271: ['1440p', 'v'], 272: ['2160p', 'v'], 313: ['2160p', 'v'], 302: ['720p60', 'v'], 303: ['1080p60', 'v'],
+  308: ['1440p60', 'v'], 315: ['2160p60', 'v'], 571: ['4320p', 'v'],
+  330: ['144p60 HDR', 'v'], 331: ['240p60 HDR', 'v'], 332: ['360p60 HDR', 'v'], 333: ['480p60 HDR', 'v'],
+  334: ['720p60 HDR', 'v'], 335: ['1080p60 HDR', 'v'], 336: ['1440p60 HDR', 'v'], 337: ['2160p60 HDR', 'v'],
   394: ['144p', 'v'], 395: ['240p', 'v'], 396: ['360p', 'v'], 397: ['480p', 'v'], 398: ['720p', 'v'],
-  399: ['1080p', 'v'], 400: ['1440p', 'v'], 401: ['2160p', 'v'],
-  139: ['48k', 'a'], 140: ['128k', 'a'], 141: ['256k', 'a'], 249: ['50k', 'a'], 250: ['70k', 'a'], 251: ['160k', 'a']
+  399: ['1080p', 'v'], 400: ['1440p', 'v'], 401: ['2160p', 'v'], 402: ['4320p', 'v'],
+  694: ['144p60', 'v'], 695: ['240p60', 'v'], 696: ['360p60', 'v'], 697: ['480p60', 'v'], 698: ['720p60', 'v'],
+  699: ['1080p60', 'v'], 700: ['1440p60', 'v'], 701: ['2160p60', 'v'], 702: ['4320p60', 'v'],
+  139: ['48k', 'a'], 140: ['128k', 'a'], 141: ['256k', 'a'], 249: ['50k', 'a'], 250: ['70k', 'a'], 251: ['160k', 'a'],
+  256: ['192k 5.1', 'a'], 258: ['384k 5.1', 'a'], 327: ['256k 5.1', 'a'], 328: ['384k EAC3', 'a'], 338: ['480k 4.0', 'a'],
+  380: ['384k AC3', 'a'], 599: ['30k', 'a'], 600: ['35k', 'a'], 773: ['IAMF', 'a'], 774: ['256k', 'a']
 };
 
 // ---------- per-tab storage (memory + storage.session so it survives worker restarts) ----------
@@ -37,8 +44,9 @@ function getList(tabId) {
 async function saveList(tabId, list) {
   await chrome.storage.session.set({ ['tab_' + tabId]: list });
   const n = new Set(Object.values(list).map(e => e.group || e.key)).size; // count videos, not tracks
-  chrome.action.setBadgeText({ tabId, text: n ? String(n) : '' });
-  chrome.action.setBadgeBackgroundColor({ tabId, color: '#e5484d' });
+  // The tab may already be closed: never leave rejected badge promises unhandled.
+  Promise.resolve(chrome.action.setBadgeText({ tabId, text: n ? String(n) : '' })).catch(() => {});
+  Promise.resolve(chrome.action.setBadgeBackgroundColor({ tabId, color: '#e5484d' })).catch(() => {});
 }
 
 async function addMedia(tabId, entry) {
@@ -46,9 +54,7 @@ async function addMedia(tabId, entry) {
   const existing = list[entry.key];
   if (existing) {
     // keep the freshest URL (signed URLs expire) and the best size info
-    existing.url = entry.url;
-    existing.size = entry.size || existing.size;
-    existing.ts = entry.ts;
+    Object.assign(existing, entry, { size: entry.size || existing.size, mime: entry.mime || existing.mime });
   } else {
     const keys = Object.keys(list);
     if (keys.length >= MAX_PER_TAB) {
@@ -75,7 +81,7 @@ async function clearTab(tabId, forget = true) {
   }
   cache.set(tabId, Promise.resolve({}));
   await chrome.storage.session.remove('tab_' + tabId);
-  chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+  Promise.resolve(chrome.action.setBadgeText({ tabId, text: '' })).catch(() => {});
 }
 
 // ---------- classification ----------
@@ -110,16 +116,27 @@ function classify(details) {
   // YouTube: googlevideo.com/videoplayback  -> strip range params, dedupe by itag
   if (u.hostname.endsWith('googlevideo.com') && u.pathname.includes('/videoplayback')) {
     if (!CFG.enableYouTube) return null;
-    if (ct.includes('ump') || u.searchParams.has('sabr')) return null; // SABR/UMP streams can't be fetched directly
+    if (ct.includes('ump') || u.searchParams.has('sabr') || (u.searchParams.has('ump') && u.searchParams.get('ump') !== '0')) return null; // SABR/UMP streams can't be fetched directly
     const itag = Number(u.searchParams.get('itag'));
     if (!itag) return null;
     ['range', 'rn', 'rbuf', 'ump', 'srfvp', 'alr'].forEach(p => u.searchParams.delete(p));
-    const mime = decodeURIComponent(u.searchParams.get('mime') || base.mime);
+    let mime = u.searchParams.get('mime') || base.mime;
+    try { mime = decodeURIComponent(mime); } catch {}
     const clen = Number(u.searchParams.get('clen')) || 0;
-    const [q, kind] = ITAGS[itag] || [`itag ${itag}`, mime.startsWith('audio') ? 'a' : 'v'];
+    const hinted = details.quality ? String(details.quality) : '';
+    const [q, kind] = ITAGS[itag] || [hinted || `itag ${itag}`, mime.startsWith('audio') ? 'a' : mime.startsWith('video') ? 'v' : details.track || 'v'];
     const what = kind === 'a' ? 'audio only' : kind === 'v' ? 'video only' : 'video + audio';
-    return { ...base, key: 'yt:' + itag, group: 'yt', kind: 'chunked', url: u.toString(), mime, size: clen || size,
-             label: `YouTube ${q} · ${what}`, track: kind, quality: q };
+    // Multi-language / DRC audio shares an itag; xtags distinguishes those renditions.
+    let xtags = u.searchParams.get('xtags') || '';
+    try { xtags = decodeURIComponent(xtags); } catch {}
+    const audioTrack = details.audioTrack || (xtags.match(/lang=([\w-]+)/)?.[1] || '');
+    const original = /acont=(original|main)/.test(xtags) || !!details.audioDefault;
+    const drc = /drc=1/.test(xtags) || !!details.drc;
+    const expire = Number(u.searchParams.get('expire')) * 1000 || 0;
+    return { ...base, key: 'yt:' + itag + (xtags ? ':' + xtags : ''), group: 'yt', kind: 'chunked', url: u.toString(), mime, size: clen || size,
+             label: `YouTube ${q} · ${what}${audioTrack && kind === 'a' ? ' · ' + audioTrack : ''}`, track: kind, quality: q, itag,
+             audioTrack, original, drc, expiresAt: expire, codecs: details.codecs || '', bitrate: details.bitrate || 0,
+             width: details.width || 0, height: details.height || 0, fps: details.fps || 0 };
   }
 
   // Instagram / Facebook CDN: strip byte-range params to get the full file, and group all
@@ -159,7 +176,7 @@ chrome.webRequest.onHeadersReceived.addListener(
   details => {
     if (details.tabId < 0 || details.statusCode >= 400) return;
     const entry = classify(details);
-    if (entry) addMedia(details.tabId, entry);
+    if (entry) addMedia(details.tabId, entry).catch(error => { if (CFG.DEBUG) console.warn('[Video Grabber]', error); });
   },
   { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object'] },
   ['responseHeaders']
@@ -175,14 +192,15 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
       && lastUrl.has(tabId) && /instagram|facebook/.test(lastUrl.get(tabId))) { lastUrl.set(tabId, info.url); return; }
   const clean = s => { try { const u = new URL(s); return u.origin + u.pathname + (u.hostname.includes('youtube') ? u.search : ''); } catch { return s; } };
   const now = clean(info.url);
-  if (lastUrl.has(tabId) && lastUrl.get(tabId) !== now) clearTab(tabId);
+  if (lastUrl.has(tabId) && lastUrl.get(tabId) !== now) clearTab(tabId).catch(() => {});
   lastUrl.set(tabId, now);
 });
-chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId); lastUrl.delete(tabId); cache.delete(tabId); });
+chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId).catch(() => {}); lastUrl.delete(tabId); cache.delete(tabId); });
 
 // ---------- messages from popup ----------
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-  if (msg.cmd?.startsWith('scanner.') || msg.cmd?.startsWith('youtube.')) return;
+  // Only keep a channel open for commands this listener actually handles.
+  if (!['list', 'clear', 'download'].includes(msg?.cmd)) return;
   (async () => {
     if (msg.cmd === 'list') {
       const list = await getList(msg.tabId);
@@ -211,9 +229,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
         reply({ ok: false, error: String(e.message || e) });
       }
     }
-  })();
+  })().catch(error => reply({ ok: false, error: String(error?.message || error) }));
   return true;
 });
 
-importScripts('shared/media.js', 'shared/playlists.js', 'background/scanner.js');
+importScripts('shared/media.js', 'shared/cdn.js', 'shared/drm.js', 'shared/xml.js', 'shared/hls.js', 'shared/dash.js',
+  'shared/playlists.js', 'background/scanner.js');
 if (CFG.ENABLE_YOUTUBE ?? CFG.enableYouTube) importScripts('shared/youtube.js','background/youtube.js');

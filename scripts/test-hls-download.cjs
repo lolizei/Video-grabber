@@ -32,7 +32,7 @@ class ConversionWorker {
   terminate() { this.stopped = true; }
 }
 async function download(file, mode = 'hls') {
-  const elements = Object.fromEntries(['#name','#status','#log','#bar','#progress','#variants'].map(key => [key,{ textContent:'', style:{} }]));
+  const elements = Object.fromEntries(['#name','#status','#log','#bar','#progress','#variants','#speed','#pause','#cancel'].map(key => [key,{ textContent:'', style:{} }]));
   let saved;
   const requests = [];
   const blobUrls = new Map();
@@ -45,12 +45,12 @@ async function download(file, mode = 'hls') {
     async search() { return [{state:'complete'}]; }, onChanged: { addListener() {}, removeListener() {} }
   } };
   const params = new URLSearchParams({ mode, url: `http://127.0.0.1:${port}/` + file, name:file, auto:'1' });
-  const context = vm.createContext({ URL:LocalURL, URLSearchParams, Blob, Response, Uint8Array, AbortSignal,
+  const context = vm.createContext({ URL:LocalURL, URLSearchParams, Blob, Response, Uint8Array, AbortSignal, AbortController, DOMException, TextDecoder, TextEncoder, clearTimeout, clearInterval, setInterval,
     crypto:webcrypto, console, chrome, Worker:ConversionWorker, setTimeout,
     location:{search:'?' + params}, document:{ querySelector: selector => elements[selector] },
     async fetch(url, options) { requests.push(url); return fetch(url, options); }
   });
-  for (const source of ['shared/media.js','shared/playlists.js']) vm.runInContext(fs.readFileSync(path.join(root,source),'utf8'),context);
+  for (const source of ['shared/media.js','shared/cdn.js','shared/drm.js','shared/xml.js','shared/hls.js','shared/dash.js','shared/mp4.js','shared/playlists.js','shared/download-engine.js']) vm.runInContext(fs.readFileSync(path.join(root,source),'utf8'),context);
   await vm.runInContext(fs.readFileSync(path.join(root,'downloader.js'),'utf8'),context);
   return { saved, status:elements['#status'].textContent, requests };
 }

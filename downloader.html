@@ -8,14 +8,24 @@
 <body class="page">
   <div class="wrap">
     <h1 id="name">Preparing download…</h1>
-    <div id="status" class="muted">Starting…</div>
+    <div id="status" class="muted" aria-live="polite">Starting…</div>
     <ul id="variants" hidden></ul>
     <div class="bar"><div id="bar"></div></div>
     <div id="progress" class="muted"></div>
+    <div id="speed" class="muted"></div>
+    <div class="actions"><button id="pause" class="ghost" hidden>Pause</button><button id="cancel" class="ghost" hidden>Cancel</button></div>
     <div id="log"></div>
   </div>
+  <script src="config.js"></script>
   <script src="shared/media.js"></script>
+  <script src="shared/cdn.js"></script>
+  <script src="shared/drm.js"></script>
+  <script src="shared/xml.js"></script>
+  <script src="shared/hls.js"></script>
+  <script src="shared/dash.js"></script>
+  <script src="shared/mp4.js"></script>
   <script src="shared/playlists.js"></script>
+  <script src="shared/download-engine.js"></script>
   <script src="downloader.js"></script>
 </body>
 </html>

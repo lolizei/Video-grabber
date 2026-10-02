@@ -1,7 +1,12 @@
 globalThis.YouTubeTools = (() => {
   function chooseTracks(items, output, quality) {
-    const streams = items.filter(item => item.kind === 'chunked' && item.group === 'yt');
+    const now = Date.now();
+    const all = items.filter(item => item.kind === 'chunked' && item.group === 'yt');
+    const streams = all.filter(item => !(item.expiresAt && item.expiresAt <= now));
+    if (all.length && !streams.length) throw new Error('All detected YouTube URLs have expired. Replay the video, Refresh, and try again.');
+    // Prefer the original/default language, non-DRC audio, then MP4 (AAC), then bitrate.
     const audios = streams.filter(item => item.track === 'a').sort((a,b) =>
+      Number(!!b.original) - Number(!!a.original) || Number(!b.drc) - Number(!a.drc) ||
       Number(b.mime.includes('mp4')) - Number(a.mime.includes('mp4')) || (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
     const muxed = streams.filter(item => item.track === 'av');
     if (output === 'mp3') {
@@ -18,6 +23,12 @@ globalThis.YouTubeTools = (() => {
     return { video, audio: audios[0] };
   }
   function args(job) {
+    // Lossless container merge of separate audio/video (used for WebM DASH in the full build).
+    if (job.mode === 'merge') {
+      if (!['webm','mkv','mp4'].includes(job.output)) throw new Error('Unsupported merge container.');
+      return ['-i','video.input','-i','audio.input','-map','0:v:0','-map','1:a:0','-c','copy',
+        ...(job.output==='mp4'?['-movflags','+faststart']:[]),'output.'+job.output];
+    }
     if (job.output === 'mp3') return ['-i','audio.input','-map','0:a:0','-vn','-c:a','libmp3lame','-b:a',job.bitrate+'k','output.mp3'];
     const inputs = ['-i','video.input', ...(job.tracks.audio ? ['-i','audio.input'] : [])];
     const maps = ['-map','0:v:0','-map',job.tracks.audio ? '1:a:0' : '0:a:0'];

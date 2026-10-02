@@ -80,3 +80,10 @@ body.page { padding: 32px 16px; }
 .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 #variants li { display: flex; justify-content: space-between; align-items: center; }
 #log { font: 12px/1.5 ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; margin-top: 16px; }
+
+.scanner-setting { font-size: 11px; color: var(--muted); display: flex; gap: 4px; align-items: center; margin-left: auto; }
+.scanner-setting select, .scanner-item select.q { font: inherit; font-size: 11px; padding: 2px 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); max-width: 100%; }
+.scanner-item select.q { margin-top: 0; flex: 1; min-width: 0; }
+.scanner-item .meta + .meta { white-space: normal; }
+#speed { margin-top: 4px; font-size: 12px; }
+.page .actions { margin-top: 10px; }

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Video Grabber",
-  "version": "1.4.0",
-  "description": "Find and save videos, audio and playlists with Video Grabber and Media Scanner. Supports MP4, WebM and HLS streams.",
+  "version": "1.5.0",
+  "description": "Find and save videos, audio and streams with Video Grabber and Media Scanner. Supports MP4, WebM, MP3, HLS and DASH; detects DRM.",
   "homepage_url": "https://github.com/lolizei/Video-grabber",
   "minimum_chrome_version": "116",
   "permissions": [

@@ -29,6 +29,9 @@
         <button class="ghost" data-filter="video" aria-pressed="false">Video</button>
         <button class="ghost" data-filter="playlist" aria-pressed="false">Playlists</button>
       </div>
+      <label class="scanner-setting" title="Parallel segment requests per download">Parallel
+        <select id="media-concurrency"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option><option value="6">6</option><option value="8">8</option></select>
+      </label>
       <button id="media-download-all">Download all</button>
     </div>
     <p id="media-summary" class="muted" aria-live="polite"></p>
@@ -40,6 +43,7 @@
   <section id="youtube-panel" role="tabpanel" aria-labelledby="youtube-tab" hidden>
     <h3 id="youtube-title">YouTube</h3>
     <p id="youtube-tracks" class="muted"></p>
+    <p id="youtube-debug" class="muted"></p>
     <label for="youtube-output">Output</label>
     <select id="youtube-output"><option value="mp4">MP4 (video+audio)</option><option value="mp3">MP3 (audio only)</option></select>
     <label id="youtube-quality-label" for="youtube-quality">Video quality</label><select id="youtube-quality"></select>

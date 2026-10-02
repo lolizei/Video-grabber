@@ -1,51 +1,97 @@
-# Media Scanner manual test checklist
+# Manual test checklist (Google Chrome and Brave)
 
-Load the unpacked extension or the **full** build in Chrome. After an update, reload the extension
-in `chrome://extensions`, then reload the test page so its content script is installed.
-These checks exercise real Chrome APIs; the optional UI preview uses mock APIs only.
+Version 1.5.0. These checks exercise the real browser and must be run by hand before a release.
+The automated suites (`node scripts/run-tests.cjs`) and the optional Playwright test
+(`scripts/test-browser-e2e.cjs`, Chromium only) do **not** replace them: Google Chrome and Brave
+have their own download UI, shields, profiles and update channels.
 
-## Local fixtures
+Record for every run: browser name and exact version (`chrome://version` / `brave://version`), OS,
+build (full/store) and the result of each item. Leave items unchecked until they were actually run.
 
-With Node.js and FFmpeg on your PATH, run:
+## 0. Setup
 
-```bash
-node scripts/manual-fixtures.cjs
-```
+1. Build: `bash scripts/build.sh` (macOS/Linux) or `powershell -ExecutionPolicy Bypass -File scripts\build.ps1` (Windows), then `node scripts/verify-build.cjs`.
+2. Start fixtures: `node scripts/manual-fixtures.cjs` (Node.js + FFmpeg with libx264, libvpx, libopus). Open `http://127.0.0.1:8765/`.
+3. **Chrome:** `chrome://extensions` → Developer mode → *Load unpacked* → `dist/full` (repeat the marked items with `dist/store`). Pin the extension.
+4. **Brave:** `brave://extensions` → Developer mode → *Load unpacked* → same folders. Brave-specific notes:
+   - Keep **Shields** at the default for `127.0.0.1`; repeat section 2 once with Shields set to *Aggressive* and note any blocked fixture requests (Shields can block third-party requests and fingerprinting-related APIs; the extension itself is not affected).
+   - Brave asks where to save each file if *Ask where to save each file* is on; test once with it on and once off.
+   - Brave's Widevine component is opt-in (`brave://settings/extensions` → *Widevine*). Test section 6 once with it disabled and once enabled.
+5. After reloading the extension, reload fixture pages so the content script is current.
 
-Open [the fixture page](http://127.0.0.1:8765/) in Chrome. All media is generated locally
-(a tone and a test pattern); no copyrighted samples or remote services are required.
-Stop the server with Ctrl+C when finished. Set `VG_TEST_PORT` if port 8765 is in use.
+## 1. Detection (both browsers, full and store builds)
 
-- [ ] Open **Media Scanner**. MP3, MP4, HLS and DASH links appear without opening each link.
-- [ ] Play the MP3 and MP4. Their sizes update from response headers, and each row shows its filename, type and source domain.
-- [ ] The MP3 player and matching link produce one row; the two different query-string URLs produce separate rows.
-- [ ] Audio / Video / Playlists / All filters work. Copy URL copies the full URL, including query parameters.
-- [ ] Download the MP3. The saved file plays and the row changes from progress to Downloaded. On an authorized public-domain MP3 page, repeat this check with the actual CDN-hosted file.
-- [ ] Download `clear.m3u8`. A download tab merges the segments and saves a playable MP4 with video and audio.
-- [ ] `encrypted.m3u8`, `protected.m3u8` and `protected.mpd` show **Protected – not downloadable** with a disabled button. No key, encrypted segment or DRM license requests are made. Download all skips them.
-- [ ] `clear.mpd` says **Download manifest**, saves an MPD, and explains that DASH media assembly is unsupported.
-- [ ] Download `referrer.m3u8`. The extension request receives 403; the original-page fetch fallback succeeds with the browser-approved Referer.
-- [ ] Filter Audio, then click Download all. At most three jobs run at once; the rest queue. Closing/reopening the popup preserves their status.
-- [ ] Download `retry.mp3` before playing/opening that link: two 503 responses trigger retries, then the file saves. `missing.mp3` produces an error with Retry.
-- [ ] First open [the plain baseline page](http://127.0.0.1:8765/plain), containing only a direct MP3 audio element and MP4 video element. Both appear, including after Clear/Refresh while playback continues. Leave Refresh pending longer than 1.5 seconds: polling must not discard its response.
-- [ ] Clear, then Refresh: current media links return. Navigate to **Empty page**: scanner results reset, and the empty state shows network hits, DOM hits and active tab id. Return and reload: results reappear without duplicates. Switch tabs and confirm only the active tab's results appear.
-- [ ] Reload the extension while the page remains open; Refresh reinjects the DOM scanner. Browser-protected pages show a useful scan error. Set DEBUG in config.js to see scanner logs.
-- [ ] Test a page with a `blob:` player (for example, an authorized HLS player). Blob URLs are skipped and explained; its HTTP playlist/media remains detectable.
-- [ ] Test a media link in a cross-origin iframe where you have access. It appears once, and the source frame is retained for an allowed referrer fallback.
-- [ ] While downloads run, stop the service worker from extension developer tools. Reopen the popup: session detections and the queue remain; completed jobs are reconciled from Chrome downloads.
-- [ ] Close a playlist download tab before completion. Its job becomes failed and the next queued job starts. A user-cancelled direct download stays cancelled without automatic retry.
-- [ ] Use an inaccessible or expired signed URL. Show a useful error; never report success or save HTML as a media file.
-- [ ] On YouTube/blob segmented playback, an empty scanner says **This site streams in segments – use the Video Grabber tab**.
-- [ ] Full build: play an authorized YouTube video until existing detection has video and audio tracks. In the YouTube tab choose MP4 at available 1080p/720p/480p quality. The saved file has both picture and sound; test separate-track and combined-track sources where available.
-- [ ] Choose MP3 at 128/192/320 kbps; each saved file contains audio only at the requested bitrate. Download %, Converting and Done appear; the title becomes a sanitized filename.
-- [ ] Cancel during download and conversion: no output is saved and the job becomes Cancelled. Cancel during saving cancels the Chrome download. Close the conversion tab: reopening the popup reconciles the cancelled job. Expired URLs and missing audio show readable errors. No new cipher/DRM handling is performed.
-- [ ] Build with `scripts/build.ps1` or `scripts/build.sh`. Both packages contain scanner modules and TS conversion. Full includes the YouTube UI/worker and local FFmpeg assets. Store excludes youtube/, background/youtube.js, shared/youtube.js, ui/youtube-tab.js and vendor/ffmpeg/, disables ENABLE_YOUTUBE, removes its tab and WebAssembly CSP permission, and excludes YouTube/googlevideo detection.
+- [ ] Media Scanner lists `tone.mp3`, `video.mp4`, the HLS and DASH links and the 1.5.0 fixtures without opening them; the list updates by itself while the popup stays open when you play media.
+- [ ] Playing the MP3/MP4 fills in size; rows show type, MIME, size, host and *from 127.0.0.1*.
+- [ ] `/player`: `fmp4-master.m3u8` (from `data-setup`), `ts-master.m3u8` (inline script), `video.mp4` (JSON-LD) appear without playing; after **Refresh**, `dash-timeline.mpd` (from the `window.player` global) appears too.
+- [ ] `tone.mp3?token=one` and `?token=two` stay separate rows; the same MP3 from the player and the link is one row.
+- [ ] Open `/redirect.mp4` directly in a tab (the browser plays the redirected file): the scanner row shows *via redirect*, a CloudFront-style signed-URL expiry and stays one row after reloads.
+- [ ] `Expired signed URL`: the row says *Link expired* with a refresh hint and Download is disabled.
+- [ ] HLS/DASH rows show qualities (`180p, 90p`), audio tracks, codecs, duration and *fMP4/MPEG-TS segments* after the protection check.
+- [ ] Switching tabs shows only the active tab's media; navigating to *Empty page* resets the list; Clear then Refresh restores current media.
+- [ ] Store build: no YouTube tab; googlevideo/YouTube media never appears.
+
+## 2. Streaming downloads (both browsers; full and store builds)
+
+Verify every saved file by playing it in the browser or VLC, and with `ffprobe` where possible.
+
+- [ ] `fmp4-master.m3u8` with quality **90p**: one MP4 with picture and sound at 160×90.
+- [ ] `fmp4-master.m3u8` with default (best) quality: 320×180 with sound.
+- [ ] `ts-master.m3u8` (TS video + separate TS audio): one MP4, audio in sync.
+- [ ] `clear.m3u8` (muxed TS): MP4 with picture and sound (1.4.x behavior).
+- [ ] `dash-timeline.mpd`, `dash-number.mpd`, `dash-single.mpd`: one MP4 each with picture and sound; quality selector changes the resolution.
+- [ ] `dash-webm.mpd`: full build → one `.webm` with VP9+Opus; store build → `[video].webm` and `[audio].webm`, both playable.
+- [ ] The download tab shows progress, *x MB / ~y MB*, speed, ETA and segment counts; the popup row shows the same with a conversion phase.
+- [ ] **Parallel = 1** vs **8**: both complete; with 8 the fixture server log shows parallel segment requests.
+- [ ] `referrer.m3u8`: extension request receives 403, the page fallback succeeds.
+- [ ] `retry.mp3`: two 503s are retried and the file saves. `missing.mp3`: error *not found* with Retry.
+- [ ] `/login.mp4`: fails with *web page instead of media*; nothing is saved.
+- [ ] Download all on the Playlists filter: at most three jobs run, the rest queue; protected/unsupported items are skipped.
+
+## 3. Pause, cancel, resume and large files (both browsers)
+
+- [ ] `big-test.mp4` (1 GB generated bytes, direct download through the browser download manager; it is not playable media): pause/resume from the popup pauses the Chrome/Brave download; cancel removes it and the row says *Cancelled*.
+- [ ] Start `dash-timeline.mpd` and press **Pause** in the download tab, then **Resume**: it completes. Press **Cancel** in the popup during another run: no file is saved, the tab says *Cancelled*.
+- [ ] Stop the fixture server during a segment download, then restart it and click **Retry**: the log says *Resuming … at segment N* and the result is complete.
+- [ ] Close a download tab mid-download: the row becomes *failed* with a resume hint; **Retry** continues from the last committed chunk.
+- [ ] Watch the browser's task manager (Shift+Esc) during a large segmented download: the download tab's memory stays well below the file size.
+- [ ] After completion or cancel, `chrome://settings/content/all` → *chrome-extension://…* shows no lingering storage growth (OPFS chunks deleted).
+
+## 4. Manifest V3 lifecycle (both browsers)
+
+- [ ] During a segment download, stop the service worker (`chrome://extensions` → *service worker* → DevTools → Application → Service workers → Stop, or `chrome://serviceworker-internals`). The download continues, progress resumes in the popup, and the job completes exactly once.
+- [ ] Reopen the popup during/after the stop: detections and queue are intact.
+- [ ] Restart the browser with *Continue where you left off* while a download tab is open: the restored tab says the job is no longer active and does not download again.
+- [ ] Double-click Download on the same row: only one job/tab starts.
+- [ ] DevTools console of the service worker and popup: no *Unchecked runtime.lastError* or unhandled promise rejections.
+
+## 5. DRM and unsupported formats (both browsers)
+
+- [ ] `encrypted.m3u8` (AES-128), `protected.m3u8` (FairPlay), `protected.mpd` and `widevine.mpd`: *Protected – not downloadable* with the system named; Download all skips them.
+- [ ] `cenc-init.m3u8` (no key tags, encrypted init segment): the job ends as *Protected* after only the init range was requested (check the fixture server log / DevTools network).
+- [ ] `smooth.ism/Manifest`: *Unsupported format*, distinct from DRM.
+- [ ] No key, license or encrypted segment requests appear in DevTools → Network for any protected fixture.
+
+## 6. Real-site EME indicator (observation only)
+
+- [ ] On a subscription site you are entitled to use, start protected playback. The Media Scanner shows *Encrypted Media Extensions are active (Widevine/PlayReady/FairPlay)* and offers no download for the protected stream. Do not attempt to download protected content.
+- [ ] Brave with Widevine disabled: the site cannot play; the scanner shows no false *downloadable* items.
+
+## 7. YouTube (full build only; both browsers)
+
+Use a video you own or that is licensed for download (for example your own upload).
+
+- [ ] Play the video, open **YouTube**, Refresh. Either tracks appear with qualities (and audio languages for multi-language videos), or the tab names the configuration (UMP/SABR, ciphered, DRM, sign-in required, live, expired) instead of a generic empty message. Record which configuration you observed.
+- [ ] With tracks: MP4 at an available quality has picture and sound; MP3 at 128/192/320 kbps contains audio only at the requested bitrate.
+- [ ] A live stream: the tab says *Live stream* and the HLS manifest appears in the Media Scanner; a short download saves the listed segments.
+- [ ] Cancel during download and conversion: no output; the job becomes *Cancelled*. Expired URLs (wait > 6 h or replay later) fail with a readable error.
+- [ ] No success message unless the file exists in the Downloads list with a non-zero size.
+
+## 8. Packages
+
+- [ ] `node scripts/verify-build.cjs` passes. Full includes the YouTube UI/worker and FFmpeg assets; store excludes `youtube/`, `background/youtube.js`, `shared/youtube.js`, `ui/youtube-tab.js`, `vendor/ffmpeg/`, the YouTube tab and the WebAssembly CSP.
+- [ ] Load both zips (unzipped) in Chrome and Brave without manifest warnings.
 
 For an isolated browser conversion check, open `/wasm-preview.html` and press Test MP4/Test MP3.
-It runs the real bundled conversion worker under an extension-style CSP with local generated media;
-it does not verify live YouTube extraction or Chrome extension permissions. Keep actual Chrome/YouTube
-checks marked pending until they have been run in a loaded extension.
-
-For a visual-only popup check, open [the UI preview](http://127.0.0.1:8765/preview.html).
-It runs the real popup HTML/CSS/UI against mock Chrome responses; it cannot verify extension permissions,
-webRequest, actual downloads or worker lifecycle behavior.
+For a visual popup check with mock data, open `/preview.html` (mock Chrome APIs; it cannot verify
+permissions, webRequest, downloads or worker lifecycle).

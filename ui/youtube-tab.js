@@ -3,7 +3,7 @@
   const button=document.querySelector('#youtube-tab');
   if(!enabled){button.remove();document.querySelector('#youtube-panel').remove();return;}
   const $=selector=>document.querySelector(selector);
-  let active=false,tabId,items=[],refreshing=false;
+  let active=false,tabId,items=[],refreshing=false,diagnostics={};
   const request=async(cmd,data={})=>{
     const reply=await chrome.runtime.sendMessage({cmd:'youtube.'+cmd,...data});
     if(!reply?.ok)throw new Error(reply?.error||'YouTube converter is unavailable.');return reply.result;
@@ -18,7 +18,12 @@
     for(const quality of qualities)$('#youtube-quality').add(new Option(quality,quality));
     if(qualities.includes(selected))$('#youtube-quality').value=selected;
     $('#youtube-start').disabled=!items.length||(!mp3&&!qualities.length);
-    $('#youtube-tracks').textContent=items.length?`${items.length} detected track${items.length===1?'':'s'} · ${qualities.join(', ')}`:'No usable YouTube URLs detected. Play the video, select its quality in the player, then Refresh. Blob/SABR or protected streams are unsupported.';
+    const languages=[...new Set(items.filter(item=>item.track==='a'&&item.audioTrack).map(item=>item.audioTrack))];
+    $('#youtube-tracks').textContent=items.length?`${items.length} detected track${items.length===1?'':'s'} · ${qualities.join(', ')}${languages.length>1?' · audio: '+languages.join(', '):''}${diagnostics.expired?' · '+diagnostics.expired+' expired (replay to refresh)':''}`:
+      diagnostics.configMessage?diagnostics.configMessage:
+      diagnostics.unsupportedHits||diagnostics.unsupportedResources||diagnostics.unsupportedMetadata?'YouTube is using UMP/SABR segmented playback. This extension cannot download that format. No direct tracks are available for MP4/MP3 conversion.':
+      'No direct YouTube tracks detected. If the extension was just installed or reloaded, reload this video page and start playback, then Refresh.';
+    $('#youtube-debug').textContent=`${diagnostics.networkHits||0} network hits, ${diagnostics.resourceHits||0} media requests (${diagnostics.totalResources||0} total), ${diagnostics.metadataHits||0} direct player URLs, ${diagnostics.players||0} players, ${diagnostics.unsupportedHits||diagnostics.unsupportedResources||0} unsupported, ${diagnostics.failedHits||0} failed · tab id ${tabId??'unknown'}${diagnostics.error?' · '+diagnostics.error:''}${!items.length&&diagnostics.metadataError?' · '+diagnostics.metadataError:''}${diagnostics.metadataSkipped?' · '+diagnostics.metadataSkipped+' ciphered/protected or URL-less entries skipped':''}${diagnostics.config?' · config: '+diagnostics.config:''}${diagnostics.metadataSource?' · metadata: '+diagnostics.metadataSource:''}${diagnostics.playability&&diagnostics.playability!=='OK'?' · playability: '+diagnostics.playability:''}`;
   }
   async function jobStatus() {
     try {
@@ -37,7 +42,8 @@
       const [tab]=await chrome.tabs.query({active:true,currentWindow:true});tabId=tab?.id;
       const isYouTube=tab && /(^|\.)(youtube\.com|youtu\.be)$/.test(new URL(tab.url).hostname);
       $('#youtube-title').textContent=tab?.title||'YouTube';
-      items=isYouTube?(await chrome.runtime.sendMessage({cmd:'list',tabId})||[]).filter(item=>item.kind==='chunked'&&item.group==='yt'):[];
+      const detected=isYouTube?await request('tracks',{tabId}):{items:[],debug:{}};
+      items=detected.items;diagnostics=detected.debug;
       renderTracks();
       if(!isYouTube)$('#youtube-tracks').textContent='Open a YouTube video page and start playback to detect available tracks.';
       await jobStatus();
@@ -69,5 +75,5 @@
     if(!active)return previousClear();
     if(tabId!==undefined)await chrome.runtime.sendMessage({cmd:'clear',tabId});items=[];renderTracks();
   };
-  setInterval(()=>{if(active&&!document.hidden)jobStatus()},1000);
+  setInterval(()=>{if(active&&!document.hidden)refresh()},2000);
 })();

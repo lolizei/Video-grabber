@@ -1,6 +1,6 @@
 # Privacy Policy – Video Grabber
 
-_Last updated: 2 October 2026_
+_Last updated: 2 October 2026 (version 1.5.0)_
 
 Video Grabber is a browser extension that finds videos on the page you are viewing and lets you download them.
 
@@ -22,6 +22,19 @@ Video Grabber is a browser extension that finds videos on the page you are viewi
   original page and its existing session. Encrypted playlists are blocked. All merging and MP4/MP3 conversion
   happen locally. The full build stores one YouTube conversion job in session storage and uses the already
   detected media URLs, with a bundled FFmpeg worker; no conversion data is uploaded to a processing server.
+- **Temporary download data (1.5.0).** Segmented downloads are staged in the extension's private
+  Origin Private File System storage on your computer so large files do not have to fit in memory and
+  interrupted downloads can resume. A small checkpoint (a hashed job key, segment counts,
+  chunk sizes and the paths of the first/last segment, used to detect a changed playlist) is kept in local
+  extension storage. Both are deleted when the download completes
+  or is cancelled; abandoned data is removed automatically after 7 days.
+- **Settings.** The parallel-segment setting is stored in local extension storage.
+- **Encryption indicators.** To explain why protected media cannot be saved, the extension notes whether
+  the page fired Encrypted Media Extensions "encrypted" events and which key system the event's
+  initialization data names (for example Widevine). It never requests licenses or keys and never changes
+  the page's player.
+- **Player sources.** On Refresh, the Media Scanner reads media addresses already exposed by common
+  web players on the page (for example video.js or JW Player). Nothing is sent anywhere.
 
 ## What the extension does not do
 
@@ -36,7 +49,7 @@ Video Grabber is a browser extension that finds videos on the page you are viewi
 |---|---|
 | `webRequest` | To notice media files and inspect headers without modifying requests |
 | `downloads` | To save selected media and monitor download progress and errors |
-| `storage` | To keep per-tab detections and download queue state in temporary session storage |
+| `storage` | Per-tab detections and the download queue in temporary session storage; the parallel-download setting and resumable-download checkpoints in local extension storage |
 | `scripting` | To rescan already-open pages/frames on Refresh and preserve the existing video/Instagram lookup; declarative content scripts automatically scan media links |
 | `<all_urls>` host access | Media can be on arbitrary pages and CDNs; Chrome still restricts protected browser pages |
 

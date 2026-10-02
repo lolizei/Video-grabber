@@ -268,6 +268,7 @@ async function load() {
   } catch { /* chrome:// pages etc. can't be scripted */ }
   let items = await chrome.runtime.sendMessage({ cmd: 'list', tabId: tab.id,
     resourceUrls: results.flatMap(r => r.result?.resourceUrls || []) }) || [];
+  if (items?.ok === false) throw new Error(items.error || 'Could not read detected media.');
   {
     const known = new Set(items.map(i => i.url.split('?')[0]));
     for (const r of results) for (const url of r.result?.domUrls || []) {
@@ -329,13 +330,22 @@ async function load() {
   $('#empty').hidden = total > 0;
 }
 
-$('#refresh').onclick = load;
-window.addEventListener('scanner.videoRefresh', load);
-$('#clear').onclick = async () => {
-  await chrome.runtime.sendMessage({ cmd: 'clear', tabId: tab.id });
-  $('#list').innerHTML = '';
+function showLoadError(error) {
   $('#count').textContent = '';
   $('#empty').hidden = false;
+  $('#empty').textContent = error.message || String(error);
+}
+async function loadSafely() { try { await load(); } catch (error) { showLoadError(error); } }
+$('#refresh').onclick = loadSafely;
+window.addEventListener('scanner.videoRefresh', loadSafely);
+$('#clear').onclick = async () => {
+  try {
+    const result = await chrome.runtime.sendMessage({ cmd: 'clear', tabId: tab.id });
+    if (result?.ok === false) throw new Error(result.error);
+    $('#list').innerHTML = '';
+    $('#count').textContent = '';
+    $('#empty').hidden = false;
+  } catch (error) { showLoadError(error); }
 };
 if (!CFG.enableYouTube) $('#ytdlp').hidden = true;
 $('#ytdlp').onclick = async e => {
@@ -344,4 +354,4 @@ $('#ytdlp').onclick = async e => {
   setTimeout(() => (e.target.textContent = 'Copy yt-dlp command'), 1400);
 };
 
-load();
+loadSafely();
