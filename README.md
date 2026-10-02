@@ -65,7 +65,7 @@ Pushing a version tag (for example `git tag v1.2.0 && git push --tags`) makes Gi
   extensions can't capture. If nothing shows up, use **Copy yt-dlp command** and run it with [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 - **Instagram** lookup needs you to be logged in. If it fails, the popup falls back to the detected pieces
   (video and audio may then be separate files).
-- **HLS** downloads save as `.ts` (plays in VLC) or `.mp4`. Convert with `ffmpeg -i in.ts -c copy out.mp4`.
+- **HLS** downloads automatically convert MPEG-TS streams with H.264/AAC to `.mp4` after downloading, without installing FFmpeg. Conversion runs locally without re-encoding. If conversion fails, the original `.ts` is saved with an explanation. Streams already in MP4 format are saved directly.
 - **DRM-protected or encrypted streams** (Netflix, Disney+, encrypted HLS) are not supported and won't be.
 
 ## Project layout

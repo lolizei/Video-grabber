@@ -181,8 +181,9 @@ function card({ thumbUrl, thumbFromVideo, previewUrl, badge, title, meta, option
 }
 
 async function startDownload(item, name) {
-  if (item.kind === 'hls' || item.kind === 'chunked') {
-    const p = new URLSearchParams({ mode: item.kind, url: item.url, name, size: item.size || 0 });
+  const isTs = /\.ts$/i.test(name) || (item.mime || '').split(';')[0] === 'video/mp2t';
+  if (item.kind === 'hls' || item.kind === 'chunked' || isTs) {
+    const p = new URLSearchParams({ mode: isTs && item.kind === 'file' ? 'ts' : item.kind, url: item.url, name, size: item.size || 0 });
     chrome.tabs.create({ url: 'downloader.html?' + p });
     return { ok: true, msg: 'Opened download tab ✓' };
   }
@@ -306,7 +307,7 @@ async function load() {
         meta: ['@' + it.user, 'video + audio'].filter(Boolean).join(' · '),
         note: fmtDur(it.duration),
         options: it.versions.map(v => ({ item: { url: v.url }, name: sanitize(base) + (v === it.versions[0] ? '' : ` [${v.h}p]`) + '.mp4', label: `${v.w}×${v.h}` })),
-        onDownload: (item, name) => chrome.runtime.sendMessage({ cmd: 'download', url: item.url, filename: name })
+        onDownload: startDownload
       }));
     }
   }

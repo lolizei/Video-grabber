@@ -42,10 +42,71 @@ async function pool(items, limit, fn) {
 
 async function save(blob) {
   const url = URL.createObjectURL(blob);
-  await chrome.downloads.download({ url, filename: name, conflictAction: 'uniquify' });
+  try {
+    const id = await chrome.downloads.download({ url, filename: name, conflictAction: 'uniquify' });
+    setStatus('Saving file…');
+    await new Promise((resolve, reject) => {
+      const changed = delta => {
+        if (delta.id !== id || !delta.state) return;
+        if (delta.state.current === 'complete' || delta.state.current === 'interrupted') {
+          chrome.downloads.onChanged.removeListener(changed);
+          if (delta.state.current === 'complete') resolve();
+          else reject(new Error('File download was interrupted.'));
+        }
+      };
+      chrome.downloads.onChanged.addListener(changed);
+      chrome.downloads.search({ id }).then(items => {
+        if (items[0]) changed({ id, state: { current: items[0].state } });
+      }, error => {
+        chrome.downloads.onChanged.removeListener(changed);
+        reject(error);
+      });
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
   setProgress(1, fmt(blob.size));
   setStatus('Done ✓ The file is in your downloads. You can close this tab.');
   document.title = 'Done – ' + name;
+}
+
+function convertTs(parts) {
+  setStatus('Download finished. Converting to MP4…');
+  setProgress(0, 'Converting…');
+  return new Promise((resolve, reject) => {
+    const worker = new Worker('ts-converter.js');
+    worker.onmessage = ({ data }) => {
+      if (data.progress !== undefined) setProgress(data.progress, `Converting · ${Math.round(data.progress * 100)}%`);
+      if (data.blob || data.error) {
+        worker.terminate();
+        if (data.error) reject(new Error(data.error));
+        else resolve(data.blob);
+      }
+    };
+    worker.onerror = event => {
+      worker.terminate();
+      reject(new Error(event.message || 'MP4 conversion failed.'));
+    };
+    // Keep originals available for a TS fallback if conversion fails.
+    worker.postMessage(parts);
+  });
+}
+
+async function saveTs(parts) {
+  let blob;
+  try {
+    blob = await convertTs(parts);
+  } catch (error) {
+    log('MP4 conversion failed: ' + error.message + ' Saving the original TS file instead.');
+    name = name.replace(/\.[^/.]+$/, '') + '.ts';
+    $('#name').textContent = name;
+    await save(new Blob(parts, { type: 'video/mp2t' }));
+    setStatus('Saved the original TS file. MP4 conversion failed; see the details below.');
+    return;
+  }
+  name = name.replace(/\.[^/.]+$/, '') + '.mp4';
+  $('#name').textContent = name;
+  await save(blob);
 }
 
 // ---------------- range-chunked (YouTube googlevideo) ----------------
@@ -186,14 +247,15 @@ async function hls() {
     return b;
   });
   if (init) parts.unshift(await get(init));
-  await save(new Blob(parts, { type: fmp4 ? 'video/mp4' : 'video/mp2t' }));
-  if (!fmp4) log('Saved as MPEG-TS (.ts). It plays in VLC; to convert to .mp4: ffmpeg -i input.ts -c copy output.mp4');
+  if (fmp4) await save(new Blob(parts, { type: 'video/mp4' }));
+  else await saveTs(parts);
 }
 
 (async () => {
   try {
     if (mode === 'hls') await hls();
     else if (mode === 'chunked') await chunked();
+    else if (mode === 'ts') await saveTs([await (await fetchRetry(srcUrl)).arrayBuffer()]);
     else throw new Error('Unknown mode.');
   } catch (e) {
     setStatus('Failed: ' + (e.message || e));
