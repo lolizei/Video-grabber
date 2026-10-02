@@ -3,11 +3,13 @@
   const list = document.querySelector('#media-list');
   const summary = document.querySelector('#media-summary');
   const empty = document.querySelector('#media-empty');
+  const diagnostics = document.querySelector('#media-debug');
   const allButton = document.querySelector('#media-download-all');
   const note = document.querySelector('#media-note');
   const filters = [...panel.querySelectorAll('[data-filter]')];
   let active = false, tabId, filter = 'all', snapshot = { items: [], jobs: [] }, generation = 0;
   const inspecting = new Set();
+  let loading = false, rescanPending = false;
   const sizes = n => n > 0 ? n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB' : 'Size unknown';
   async function request(cmd, data = {}) {
     const response = await chrome.runtime.sendMessage({ cmd: 'scanner.' + cmd, tabId, ...data });
@@ -21,11 +23,15 @@
     list.replaceChildren();
     summary.textContent = `${items.length} ${items.length === 1 ? 'item' : 'items'}${filter !== 'all' ? ' · ' + filter : ''}`;
     empty.hidden = items.length > 0;
-    empty.textContent = snapshot.items.length ? 'No items match this filter.' : 'No media detected. Play media or click Refresh to scan links on this page.';
+    const segmented = snapshot.blobs || snapshot.segments || /(^|\.)(youtube\.com|youtu\.be)$/.test(snapshot.pageHost || '');
+    empty.textContent = snapshot.items.length ? 'No items match this filter.' : segmented ? 'This site streams in segments – use the Video Grabber tab' : 'No media detected. Play media or click Refresh to scan links on this page.';
+    const info = snapshot.debug || {};
+    diagnostics.textContent = `${info.networkHits || 0} network hits, ${info.domHits || 0} DOM hits, tab id ${tabId ?? 'unknown'}${info.scanError ? ' · ' + info.scanError : ''}`;
+    diagnostics.hidden = items.length > 0;
     const messages = [];
     if (snapshot.blobs) messages.push('Blob player URLs cannot be downloaded directly. Associated HTTP media or playlists appear here when detected.');
     if (items.some(item => item.kind === 'dash')) messages.push('DASH downloads save the manifest only.');
-    if (items.some(item => item.protection?.status === 'protected' || currentJob(item.url)?.status === 'protected')) messages.push('Protected playlists can be saved as original files. They retain their DRM and do not include a decrypted video.');
+    if (items.some(item => item.protection?.status === 'protected')) messages.push('Protected – not downloadable');
     note.hidden = !messages.length;
     note.textContent = messages.join(' ');
     allButton.disabled = !items.some(item => item.protection?.status !== 'protected' && !['queued', 'running'].includes(currentJob(item.url)?.status));
@@ -44,11 +50,12 @@
       const download = document.createElement('button');
       const protectedItem = item.protection?.status === 'protected' || job?.status === 'protected';
       const busy = ['queued', 'running'].includes(job?.status);
-      download.textContent = protectedItem ? 'Download playlist' : job?.status === 'failed' ? 'Retry' : item.kind === 'dash' ? 'Download manifest' : 'Download';
-      download.disabled = busy;
+      const checking = item.type === 'playlist' && item.protection?.status !== 'clear';
+      download.textContent = protectedItem ? 'Protected – not downloadable' : checking ? 'Checking protection' : job?.status === 'failed' ? 'Retry' : item.kind === 'dash' ? 'Download manifest' : 'Download';
+      download.disabled = busy || protectedItem || checking;
       download.onclick = async () => {
         download.disabled = true;
-        try { await request('download', { urls: [item.url], rawPlaylist: protectedItem }); await load(); }
+        try { await request('download', { urls: [item.url] }); await load(); }
         catch (error) { status.textContent = error.message; download.disabled = false; }
       };
       const copy = document.createElement('button'); copy.className = 'ghost'; copy.textContent = 'Copy URL';
@@ -60,7 +67,7 @@
       const status = document.createElement('div'); status.className = 'status'; status.setAttribute('aria-live', 'polite');
       if (job) { status.textContent = job.message; if (job.status === 'failed' || job.status === 'protected') status.classList.add('err'); }
       else if (protectedItem) { status.textContent = 'Protected · ' + (item.protection?.reason || 'DRM'); status.classList.add('err'); }
-      else if (item.type === 'playlist') status.textContent = item.protection?.status === 'clear' ? item.protection.reason === 'AES-128' ? 'AES-128 · supported' : 'No protection detected' : item.protection?.status === 'unknown' ? 'Protection check failed · ' + item.protection.reason : 'Checking protection…';
+      else if (item.type === 'playlist') status.textContent = item.protection?.status === 'clear' ? 'No protection detected' : item.protection?.status === 'unknown' ? 'Protection check failed · ' + item.protection.reason : 'Checking protection…';
       row.append(title, meta, actions, status);
       if (busy) {
         const progress = document.createElement('progress'); progress.max = 1;
@@ -86,13 +93,24 @@
     }
   }
   async function load(rescan = false) {
-    const revision = ++generation;
+    if (loading) { rescanPending ||= rescan; return; }
+    loading = true;
+    let revision = generation;
     try {
-      if (tabId === undefined) { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab.id; }
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error('No active page tab is available.');
+      if (tabId !== tab.id) { tabId = tab.id; revision = ++generation; rescan = true; }
       const result = await request(rescan ? 'refresh' : 'list');
       if (revision !== generation) return;
-      snapshot = result; render(); checks();
-    } catch (error) { summary.textContent = error.message; }
+      snapshot = { ...result, pageHost: (() => { try { return new URL(tab.url).hostname; } catch { return ''; } })() }; render(); checks();
+    } catch (error) {
+      summary.textContent = error.message;
+      diagnostics.hidden = false; diagnostics.textContent = `${snapshot.debug?.networkHits || 0} network hits, ${snapshot.debug?.domHits || 0} DOM hits, tab id ${tabId ?? 'unknown'} · ${error.message}`;
+      if (CFG.DEBUG) console.error('[Media Scanner]', error);
+    } finally {
+      loading = false;
+      if (rescanPending) { rescanPending = false; load(true); }
+    }
   }
   filters.forEach(button => { button.onclick = () => {
     filter = button.dataset.filter;
@@ -120,6 +138,7 @@
   }
   document.querySelector('#media-tab').onclick = () => select(true);
   document.querySelector('#video-tab').onclick = () => select(false);
+  window.addEventListener('popup.youtube',()=>{active=false;generation++;});
   const videoRefresh = document.querySelector('#refresh').onclick;
   const videoClear = document.querySelector('#clear').onclick;
   document.querySelector('#refresh').onclick = () => active ? load(true) : videoRefresh();

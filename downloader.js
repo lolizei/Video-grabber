@@ -238,7 +238,6 @@ async function hls() {
   if (fmp4) name = name.replace(/\.[^/.]+$/, '') + '.mp4';
   $('#name').textContent = name;
 
-  const keys = new Map();
   const fetchBytes = async (target, options = {}) => {
     for (let attempt = 1; ; attempt++) {
       try { return await (await fetchRetry(target, options, 1)).arrayBuffer(); }
@@ -250,15 +249,7 @@ async function hls() {
   };
   const get = async s => {
     const opts = s.range ? { headers: { Range: `bytes=${s.range[0]}-${s.range[1]}` } } : {};
-    const bytes = await fetchBytes(s.url, opts);
-    if (!s.encryption) return bytes;
-    const keyUrl = s.encryption.url;
-    if (!keys.has(keyUrl)) keys.set(keyUrl, (async () => {
-      const raw = await fetchBytes(keyUrl);
-      if (raw.byteLength !== 16) throw new Error('AES-128 key must contain exactly 16 bytes.');
-      return crypto.subtle.importKey('raw', raw, 'AES-CBC', false, ['decrypt']);
-    })());
-    return crypto.subtle.decrypt({ name: 'AES-CBC', iv: s.encryption.iv }, await keys.get(keyUrl), bytes);
+    return fetchBytes(s.url, opts);
   };
 
   setStatus(`Downloading ${segs.length} segments…`);
@@ -275,19 +266,6 @@ async function hls() {
 }
 
 async function direct() {
-  if (mode === 'raw-playlist') {
-    setStatus('Downloading original playlist…');
-    const response = await fetchRetry(srcUrl);
-    const text = await response.text();
-    const hls = text.trimStart().startsWith('#EXTM3U');
-    if (!hls && !/<(?:[\w.-]+:)?MPD\b/i.test(text)) throw new Error('Not a valid media playlist.');
-    name = name.replace(/\.[^/.]+$/, '') + (hls ? '.m3u8' : '.mpd');
-    $('#name').textContent = name;
-    await save(new Blob([text], { type: hls ? 'application/vnd.apple.mpegurl' : 'application/dash+xml' }));
-    log('Saved the original playlist only. Protection is retained; media segments and DRM licenses are not downloaded.');
-    setStatus('Original playlist saved ✓ Protection is retained; this is not a playable video download.');
-    return;
-  }
   setStatus(mode === 'manifest' ? 'Checking DASH protection…' : 'Downloading file…');
   const response = await fetchRetry(srcUrl);
   if (mode === 'manifest') {
@@ -320,7 +298,7 @@ async function direct() {
     if (mode === 'hls') await hls();
     else if (mode === 'chunked') await chunked();
     else if (mode === 'ts') await saveTs([await (await fetchRetry(srcUrl)).arrayBuffer()]);
-    else if (mode === 'file' || mode === 'manifest' || mode === 'raw-playlist') await direct();
+    else if (mode === 'file' || mode === 'manifest') await direct();
     else throw new Error('Unknown mode.');
     await report('complete', true);
   } catch (e) {

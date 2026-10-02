@@ -71,6 +71,23 @@ async function run() {
   assert.equal(tools.filename('CON.mp3'), '_CON.mp3');
   assert(!/[\\/:*?"<>|]/.test(tools.filename('test:*?/.mp3')));
   const dom = urls => env.send({ cmd: 'scanner.dom', urls: urls.map(url => ({url})), blobs: 1 }, { tab: pages.get(8), frameId: 0, url: pages.get(8).url });
+  const page = vm.createContext({ URL, console, setTimeout, clearTimeout,
+    location:{href:pages.get(8).url},
+    document:{documentElement:{},addEventListener(){},removeEventListener(){},querySelectorAll(selector){
+      return selector === 'video,audio' ? ['AUDIO','VIDEO'].map(tagName=>({tagName,currentSrc:'',getAttribute(){return tagName==='AUDIO'?'https://cdn.test/tone.mp3':'https://cdn.test/video.mp4'}})) : [];
+    }},performance:{getEntriesByType(){return []}},
+    MutationObserver:class{observe(){}disconnect(){}},PerformanceObserver:class{observe(){}disconnect(){}},
+    chrome:{runtime:{onMessage:event(),sendMessage(msg){return env.send(msg,{tab:pages.get(8),frameId:0,url:pages.get(8).url})}}}
+  });
+  env.chrome.scripting.executeScript = async options => {
+    if(options.files) { for(const file of options.files)vm.runInContext(fs.readFileSync(path.join(root,file),'utf8'),page);return[{frameId:0}]; }
+    return[{frameId:0,result:vm.runInContext('('+options.func.toString()+')()',page)}];
+  };
+  const baseline = await env.request('refresh');
+  assert.deepEqual(Array.from(baseline.items,item=>item.type).sort(),['audio','video']);
+  assert.equal(baseline.debug.domHits,2);assert.equal(baseline.debug.scanError,'');
+  await env.request('refresh'); // Fresh content-script reinjection must still collect both items.
+  await env.request('clear');
   for (const listener of env.chrome.webRequest.onSendHeaders.listeners) listener({ tabId:8, requestId:'media-1', requestHeaders:[{name:'Referer',value:'https://example.test/page'}] });
   for (const listener of env.chrome.webRequest.onHeadersReceived.listeners) listener({ tabId:8, frameId:0, requestId:'media-1', method:'GET', statusCode:200, timeStamp:Date.now(), url:'https://cdn.test/tiny', responseHeaders:[{name:'content-type',value:'audio/mpeg'},{name:'content-length',value:'12'}] });
   const network = (await env.request('list')).items[0];
@@ -94,6 +111,7 @@ async function run() {
   assert.equal((await env.request('inspect', { url: hls })).status, 'protected');
   assert.equal((await env.request('inspect', { url: dash })).status, 'protected');
   assert.equal((await env.request('inspect', { url: clear })).reason, 'AES-128');
+  assert.equal((await env.request('inspect', { url: clear })).status, 'protected');
   assert.equal((await env.request('download', { urls: [hls, dash] })).length, 0);
   await dom(['https://cdn.test/a.mp3','https://cdn.test/b.mp3','https://cdn.test/c.mp3','https://cdn.test/d.mp3']);
   const ids = await env.request('download', { urls: ['a','b','c','d'].map(name => 'https://cdn.test/' + name + '.mp3') });
@@ -115,21 +133,12 @@ async function run() {
   const restart = setup(); snapshot = await restart.request('list'); assert.equal(snapshot.jobs.filter(j => j.status === 'running').length, 3);
   assert.equal(playlist.protection('#EXTM3U\n#EXT-X-SESSION-KEY:METHOD=AES-128,KEYFORMAT="com.apple.streamingkeydelivery",URI="key"'), 'AES-128 · com.apple.streamingkeydelivery');
   const text = '#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:257\n#EXT-X-KEY:METHOD=AES-128,URI="key1"\na.ts\n#EXT-X-KEY:METHOD=AES-128,URI="key2",IV=0x10\nb.ts\n#EXT-X-KEY:METHOD=NONE\nc.ts\n#EXT-X-ENDLIST';
-  const parsed = playlist.parseMedia(text, 'https://cdn.test/p.m3u8');
-  assert.equal(parsed.segs[0].encryption.iv[14], 1); assert.equal(parsed.segs[0].encryption.iv[15], 1);
-  assert.equal(parsed.segs[1].encryption.iv[15], 16); assert.equal(parsed.segs[1].encryption.url, 'https://cdn.test/key2');
-  assert.equal(parsed.segs[2].encryption, null);
-  const raw = webcrypto.getRandomValues(new Uint8Array(16));
-  const key = await webcrypto.subtle.importKey('raw', raw, 'AES-CBC', false, ['encrypt','decrypt']);
-  const payload = new TextEncoder().encode('Generated media payload with PKCS7 padding');
-  const encrypted = await webcrypto.subtle.encrypt({ name: 'AES-CBC', iv: parsed.segs[0].encryption.iv }, key, payload);
-  const decrypted = await webcrypto.subtle.decrypt({ name: 'AES-CBC', iv: parsed.segs[0].encryption.iv }, key, encrypted);
-  assert.deepEqual(new Uint8Array(decrypted), payload);
+  assert.throws(()=>playlist.parseMedia(text,'https://cdn.test/p.m3u8'),/Protected/);
   assert.throws(() => playlist.parseMedia('#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="key"\na.ts', clear), /Protected/);
   const ranges = playlist.parseMedia('#EXTM3U\n#EXT-X-BYTERANGE:10@0\nfile.mp4\n#EXT-X-BYTERANGE:5\nfile.mp4', clear);
   assert.deepEqual(Array.from(ranges.segs[1].range), [10,14]);
   assert.throws(() => playlist.parseMedia('#EXTM3U\n#EXT-X-BYTERANGE:10\nfile.mp4', clear), /previous/);
-  assert.throws(() => playlist.parseMedia('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key"\n#EXT-X-MAP:URI="init.mp4"\nfile.m4s', clear), /explicit IV/);
+  assert.throws(() => playlist.parseMedia('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key"\n#EXT-X-MAP:URI="init.mp4"\nfile.m4s', clear), /Protected/);
   // Both network detection and DOM recovery enforce the store build exclusion.
   const store = setup(false);
   assert.equal(store.context.MediaScanner.classifyRequest({ url: 'https://r.googlevideo.com/videoplayback?itag=18', method: 'GET', responseHeaders: [{name:'content-type',value:'video/mp4'}] }), null);
@@ -138,10 +147,7 @@ async function run() {
   assert(fetchCount >= 4);
   stored.scanner_jobs = [];
   const rawIds = await env.request('download', { urls: [hls,dash], rawPlaylist:true });
-  assert.equal(rawIds.length,2);
-  const rawJobs = (await env.request('list')).jobs.filter(job => rawIds.includes(job.id));
-  assert(rawJobs.every(job => job.rawPlaylist));
-  assert(rawJobs.every(job => new URL(pages.get(job.workerTab).url).searchParams.get('mode') === 'raw-playlist'));
-  console.log('Passed: classification, URL deduplication, session restart, navigation, DRM checks, AES-128/IVs/key rotation, byte ranges, durable queue/concurrency/retries, store exclusion.');
+  assert.equal(rawIds.length,0);
+  console.log('Passed: actual MP3/MP4 DOM baseline and reinjection, classification, session restart, navigation, encrypted/DRM blocking, byte ranges, queue/concurrency/retries, store exclusion.');
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,5 +1,5 @@
 const $ = s => document.querySelector(s);
-const CFG = globalThis.VG_CONFIG || { enableYouTube: true };
+const CFG = { ...(globalThis.VG_CONFIG || {}), enableYouTube: globalThis.VG_CONFIG?.ENABLE_YOUTUBE ?? globalThis.VG_CONFIG?.enableYouTube ?? true };
 let tab;
 
 const fmtSize = n => !n ? '' : n > 1 << 30 ? (n / (1 << 30)).toFixed(2) + ' GB' : n > 1 << 20 ? (n / (1 << 20)).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
@@ -291,7 +291,7 @@ async function load() {
     groups.length = 0;
   } else if (isYt) {
     tip.hidden = false;
-    tip.innerHTML = 'YouTube sends video and audio separately. Download both, then merge them: <code>ffmpeg -i video.mp4 -i audio.m4a -c copy out.mp4</code>. ' +
+    tip.innerHTML = 'Use the <b>YouTube</b> tab to merge video and audio into MP4 or convert audio to MP3 locally. ' +
       'If nothing appears, use <b>Copy yt-dlp command</b>.';
   } else if (isIg && igError) {
     tip.hidden = false;

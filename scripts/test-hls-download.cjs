@@ -57,7 +57,7 @@ async function download(file, mode = 'hls') {
 (async () => {
   try {
     await ready;
-    for (const file of ['clear.m3u8','encrypted.m3u8']) {
+    for (const file of ['clear.m3u8']) {
       const result = await download(file);
       assert(result.saved, result.status);
       assert.match(result.saved.filename,/\.mp4$/);
@@ -69,7 +69,7 @@ async function download(file, mode = 'hls') {
       execFileSync('ffmpeg',['-v','error','-i',output,'-f','null','-']);
       assert.match(result.status,/Done/);
     }
-    for (const [file,mode] of [['protected.m3u8','hls'],['protected.mpd','manifest']]) {
+    for (const [file,mode] of [['encrypted.m3u8','hls'],['protected.m3u8','hls'],['protected.mpd','manifest']]) {
       const result = await download(file,mode);
       assert.equal(result.saved,undefined);
       assert.match(result.status,/Protected stream/);
@@ -80,12 +80,10 @@ async function download(file, mode = 'hls') {
     assert.match(await dash.saved.blob.text(),/<MPD/);
     for (const file of ['protected.m3u8','protected.mpd']) {
       const result = await download(file,'raw-playlist');
-      assert.equal(result.saved.filename,file);
-      assert.match(await result.saved.blob.text(),/SAMPLE-AES|ContentProtection/);
-      assert.equal(result.requests.length,1);
-      assert.match(result.status,/Protection is retained/);
+      assert.equal(result.saved,undefined);
+      assert.equal(result.requests.length,0);
     }
-    console.log('Passed: real clear/AES-128 HLS downloads and decoded MP4 audio/video; DRM blocked before segment/key requests; unprotected DASH manifest.');
+    console.log('Passed: clear HLS MP4 audio/video; encrypted/DRM blocking before segment/key requests; protected raw-download mode removed.');
   } finally {
     server.kill(); fs.rmSync(temp,{recursive:true,force:true});
   }

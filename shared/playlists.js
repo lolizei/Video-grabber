@@ -10,9 +10,7 @@ globalThis.PlaylistTools = (() => {
       const method = attr(line, 'METHOD');
       const format = attr(line, 'KEYFORMAT') || 'identity';
       if (method === 'NONE') continue;
-      if (format !== 'identity' || !['AES-128', 'NONE'].includes(method)) {
-        return method + (format !== 'identity' ? ' · ' + format : '');
-      }
+      return method + (format !== 'identity' ? ' · ' + format : '');
     }
     return null;
   }

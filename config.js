@@ -2,5 +2,7 @@
 // where YouTube support is turned off (store policy doesn't allow YouTube downloaders).
 globalThis.VG_CONFIG = {
   build: 'full',
-  enableYouTube: true
+  ENABLE_YOUTUBE: true,
+  enableYouTube: true,
+  DEBUG: false
 };

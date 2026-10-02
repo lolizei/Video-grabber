@@ -39,18 +39,19 @@ const previewMock = `(() => {
     {url:'${base}/tone.mp3',type:'audio',kind:'audio',filename:'tone.mp3',domain:'127.0.0.1',size:24429},
     {url:'${base}/video.mp4',type:'video',kind:'video',filename:'video.mp4',domain:'127.0.0.1',size:60234},
     {url:'${base}/clear.m3u8',type:'playlist',kind:'hls',filename:'clear.m3u8',domain:'127.0.0.1',size:248,protection:{status:'clear'}},
-    {url:'${base}/encrypted.m3u8',type:'playlist',kind:'hls',filename:'encrypted.m3u8',domain:'127.0.0.1',size:310,protection:{status:'clear',reason:'AES-128'}},
+    {url:'${base}/encrypted.m3u8',type:'playlist',kind:'hls',filename:'encrypted.m3u8',domain:'127.0.0.1',size:310,protection:{status:'protected',reason:'AES-128'}},
     {url:'${base}/protected.m3u8',type:'playlist',kind:'hls',filename:'protected.m3u8',domain:'127.0.0.1',size:180,protection:{status:'protected',reason:'SAMPLE-AES · FairPlay'}},
     {url:'${base}/clear.mpd',type:'playlist',kind:'dash',filename:'clear.mpd',domain:'127.0.0.1',size:100,protection:{status:'clear'}}
   ];
   let items = structuredClone(entries), jobs = [];
-  const snapshot = () => ({items:structuredClone(items),jobs:structuredClone(jobs),blobs:1});
+  const snapshot = () => ({items:structuredClone(items),jobs:structuredClone(jobs),blobs:1,debug:{networkHits:2,domHits:6}});
   window.chrome = {
     tabs:{async query(){return [{id:1,url:'${base}/',title:'Media Scanner fixtures'}]}},
     scripting:{async executeScript(){return []}},
     runtime:{async sendMessage(msg){
       if(msg.cmd==='list')return [];
       if(msg.cmd==='clear')return true;
+      if(msg.cmd==='youtube.status')return {ok:true,result:null};
       if(msg.cmd==='scanner.clear'){items=[];return {ok:true}}
       if(msg.cmd==='scanner.refresh'){items=structuredClone(entries);return {ok:true,result:snapshot()}}
       if(msg.cmd==='scanner.list')return {ok:true,result:snapshot()};
@@ -64,25 +65,52 @@ const previewMock = `(() => {
     }}
   };
 })();`;
-const extensions = new Set(['popup.html','popup.js','config.js','style.css','shared/media.js','ui/media-tab.js']);
+const extensions = new Set(['popup.html','popup.js','config.js','style.css','shared/media.js','ui/media-tab.js','ui/youtube-tab.js',
+  'shared/youtube.js','youtube/converter-worker.js','vendor/ffmpeg/ffmpeg-core.js','vendor/ffmpeg/ffmpeg-core.wasm']);
 let retry = 0;
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, base);
   if (url.pathname === '/') { res.setHeader('Content-Type','text/html'); res.end(html); return; }
+  if (url.pathname === '/plain') { res.setHeader('Content-Type','text/html'); res.end('<!doctype html><title>Plain MP3 and MP4 baseline</title><h1>Direct media baseline</h1><audio controls src="/tone.mp3"></audio><video controls src="/video.mp4" width="320"></video>'); return; }
   if (url.pathname === '/empty') { res.setHeader('Content-Type','text/html'); res.end('<!doctype html><title>Empty test page</title><h1>No media here</h1>'); return; }
   if (url.pathname === '/preview-chrome.js') { res.setHeader('Content-Type','text/javascript'); res.end(previewMock); return; }
   if (url.pathname === '/preview.html') {
     res.setHeader('Content-Type','text/html');
     res.end(fs.readFileSync(path.join(root,'popup.html'),'utf8')
       .replace('<head>','<head><script src="/preview-chrome.js"></script>')
-      .replace(/src="(config.js|shared\/media.js|popup.js|ui\/media-tab.js)"/g,'src="/extension/$1"')
+      .replace(/src="(config.js|shared\/media.js|popup.js|ui\/media-tab.js|ui\/youtube-tab.js)"/g,'src="/extension/$1"')
       .replace('href="style.css"','href="/extension/style.css"'));
     return;
+  }
+  if (url.pathname === '/wasm-preview.html') {
+    res.setHeader('Content-Type','text/html');
+    res.setHeader('Content-Security-Policy',"script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'");
+    res.end('<!doctype html><meta charset="utf-8"><title>Bundled FFmpeg worker test</title><h1>Bundled FFmpeg worker test</h1><p>Generated local test-pattern video; no YouTube or remote services.</p><button id="run-mp4">Test MP4</button> <button id="run-mp3">Test MP3</button><p id="status">Ready</p><a id="save" hidden>Save converted fixture</a><video id="preview" controls width="320"></video><script src="/wasm-preview.js"></script>');return;
+  }
+  if (url.pathname === '/wasm-preview.js') {
+    res.setHeader('Content-Type','text/javascript');
+    res.end(`let blobURL;async function run(output){
+      document.querySelector('#status').textContent='Loading generated fixture…';
+      const bytes=await(await fetch('/video.mp4')).arrayBuffer();
+      const worker=new Worker('/extension/youtube/converter-worker.js');
+      worker.onmessage=({data})=>{
+        if(data.type==='done'){
+          if(blobURL)URL.revokeObjectURL(blobURL);
+          blobURL=URL.createObjectURL(new Blob([data.data],{type:output==='mp3'?'audio/mpeg':'video/mp4'}));
+          document.querySelector('#preview').src=blobURL;
+          const link=document.querySelector('#save');link.href=blobURL;link.download='fixture.'+output;link.hidden=false;
+          document.querySelector('#status').textContent='Passed '+output.toUpperCase()+' conversion · '+data.data.length+' bytes';worker.terminate();
+        }else document.querySelector('#status').textContent=data.message||'Converting…';
+      };
+      worker.onerror=event=>{document.querySelector('#status').textContent='Failed: '+event.message;worker.terminate()};
+      const job={output,bitrate:192,tracks:output==='mp4'?{video:{mime:'video/mp4'}}:{audio:{mime:'audio/mp4'}}};
+      worker.postMessage({job,files:[{name:output==='mp4'?'video.input':'audio.input',data:bytes}]},[bytes]);
+    }document.querySelector('#run-mp4').onclick=()=>run('mp4');document.querySelector('#run-mp3').onclick=()=>run('mp3');`);return;
   }
   if (url.pathname.startsWith('/extension/')) {
     const file = url.pathname.slice('/extension/'.length);
     if (!extensions.has(file)) { res.writeHead(404).end(); return; }
-    res.setHeader('Content-Type',file.endsWith('.css')?'text/css':'text/javascript'); res.end(fs.readFileSync(path.join(root,file))); return;
+    res.setHeader('Content-Type',file.endsWith('.css')?'text/css':file.endsWith('.wasm')?'application/wasm':'text/javascript'); res.end(fs.readFileSync(path.join(root,file))); return;
   }
   if (url.pathname === '/referrer.m3u8' && !(req.headers.referer || '').startsWith(base + '/')) { res.writeHead(403).end('Referer required'); return; }
   if (url.pathname === '/retry.mp3' && retry++ < 2) { res.writeHead(503).end('Temporary failure'); return; }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0
+- Fixed a reproduced polling/Refresh race that discarded scanner results; added visible diagnostics and scan errors
+- Refresh reinjects current DOM scanning and recovers existing Video Grabber detections
+- Restored all-URL host/content-script matching while retaining synchronous listeners and session state
+- Blocked all encrypted HLS and protected DASH downloads, including previously supported AES-128 and protected manifest saving
+- Added full-build YouTube MP4 video/audio merge, MP3 bitrate options, progress and cancellation using bundled FFmpeg WebAssembly in a worker
+- Added ENABLE_YOUTUBE and excluded YouTube conversion UI/code/assets from store packages
+- Added real WebAssembly conversion tests and updated manual testing instructions
+
 ## 1.3.0
 - Added Media Scanner popup tab with audio/video/playlist filters, sizes, source domains, Copy URL and Download all
 - Added per-tab DOM/network detection and session storage, clearing on navigation

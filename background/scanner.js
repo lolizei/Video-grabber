@@ -6,7 +6,8 @@ globalThis.MediaScanner = (() => {
   const LIMIT = 200, CONCURRENCY = 3;
   let jobsQueue = Promise.resolve();
   const key = tabId => 'scanner_tab_' + tabId;
-  const blank = () => ({ pageUrl: '', entries: {}, blobs: 0 });
+  const blank = () => ({ pageUrl: '', entries: {}, blobs: 0, networkHits: 0, domHits: 0, segments: 0, scanError: '' });
+  const debug = (...values) => { if (CFG.DEBUG) console.log('[Media Scanner]', ...values); };
   const allowed = (url, pageUrl = '') => CFG.enableYouTube || ![url, pageUrl].some(value => {
     try { return /(^|\.)(youtube\.com|youtu\.be|googlevideo\.com)$/.test(new URL(value).hostname); } catch { return false; }
   });
@@ -46,11 +47,16 @@ globalThis.MediaScanner = (() => {
   async function observe(details) {
     if (details.tabId < 0 || details.method !== 'GET' || details.statusCode < 200 || details.statusCode >= 300) return;
     const item = classifyRequest(details);
-    if (!item) return;
+    if (!item) {
+      if (/\.(ts|m4s|cmfv|cmfa)(?:[?#]|$)/i.test(details.url)) await serial(details.tabId, state => { state.segments = (state.segments || 0) + 1; });
+      return;
+    }
     const referrer = referrers.get(details.requestId) || '';
     await serial(details.tabId, state => {
       if (details.timeStamp < (navigationTimes.get(details.tabId) || 0)) return;
       put(state, { ...item, frameId: details.frameId, referrer });
+      state.networkHits = (state.networkHits || 0) + 1;
+      debug('network hit', details.tabId, item.type, item.domain);
     });
   }
   async function navigate(tabId, pageUrl, force = false) {
@@ -75,22 +81,39 @@ globalThis.MediaScanner = (() => {
           item = { url, type: value.hint, kind: value.hint, filename: MediaTools.filename(basename || 'media'), size: 0, mime: '', domain: new URL(url).hostname };
           if (/\.ts$/i.test(basename)) item.mode = 'ts';
         }
-        if (item) put(state, { ...item, frameId: sender.frameId, referrer: sender.url });
+        if (item) put(state, { ...item, frameId: sender.frameId, referrer: sender.url, domSource: true });
       }
       state.blobs = Math.max(state.blobs, Number(msg.blobs) || 0);
+      state.domHits = Object.values(state.entries).filter(entry => entry.domSource).length;
+      debug('DOM scan', tabId, state.domHits);
     });
   }
   async function refresh(tabId) {
+    const tab = await chrome.tabs.get(tabId);
+    await navigate(tabId, tab.url);
     try {
       await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content/dom-scan.js'] });
       const results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => globalThis.VGDomScan?.() });
-      const tab = await chrome.tabs.get(tabId);
-      await navigate(tabId, tab.url);
       for (const result of results) if (result.result) await dom(result.result, { tab, frameId: result.frameId, url: result.result.pageUrl });
       await serial(tabId, state => {
+        state.scanError = results.some(result => result.result) ? '' : 'DOM scan returned no frame results.';
         for (const entry of Object.values(state.entries)) if (entry.protection?.status === 'unknown') delete entry.protection;
       });
-    } catch { /* Restricted pages have no script access; network results still work. */ }
+    } catch (error) {
+      debug('DOM scan failed', tabId, error.message);
+      await serial(tabId, state => { state.scanError = error.message; });
+    }
+    // Rebuild from the working detector when the scanner missed earlier requests.
+    const detected = await getList(tabId);
+    await serial(tabId, state => {
+      for (const entry of Object.values(detected)) {
+        const item = classifyRequest({ url: entry.url, method: 'GET', responseHeaders: entry.mime ? [{ name: 'content-type', value: entry.mime }] : [] });
+        if (item && !state.entries[item.url]) {
+          put(state, { ...item, size: entry.size, referrer: tab.url });
+          state.networkHits = (state.networkHits || 0) + 1;
+        }
+      }
+    });
   }
   async function fetchMedia(url, item = {}, options = {}) {
     if (!MediaTools.httpUrl(url)) throw new Error('Only HTTP(S) URLs can be fetched.');
@@ -121,7 +144,6 @@ globalThis.MediaScanner = (() => {
     const item = await serial(tabId, state => state.entries[url]);
     if (!item || item.type !== 'playlist') throw new Error('Playlist is no longer on this page.');
     const seen = new Set();
-    let encrypted = false;
     async function walk(next, depth) {
       if (seen.has(next)) return null;
       if (depth > 5 || seen.size >= 50) throw new Error('Playlist inspection limit reached.');
@@ -132,7 +154,6 @@ globalThis.MediaScanner = (() => {
       if (item.kind === 'dash' && !/<(?:[\w.-]+:)?MPD\b/i.test(text)) throw new Error('Not a DASH manifest.');
       const reason = PlaylistTools.protection(text);
       if (reason) return reason;
-      if (/#EXT-X-(?:SESSION-)?KEY:.*METHOD=AES-128/.test(text)) encrypted = true;
       for (const child of PlaylistTools.children(text, response.url || next)) {
         const reason = await walk(child, depth + 1);
         if (reason) return reason;
@@ -142,7 +163,7 @@ globalThis.MediaScanner = (() => {
     let protection;
     try {
       const reason = await walk(url, 0);
-      protection = { status: reason ? 'protected' : 'clear', reason: reason || (encrypted ? 'AES-128' : '') };
+      protection = { status: reason ? 'protected' : 'clear', reason: reason || '' };
     } catch (error) { protection = { status: 'unknown', reason: error.message }; }
     await serial(tabId, state => { if (state.entries[url]) state.entries[url].protection = protection; });
     return protection;
@@ -166,7 +187,7 @@ globalThis.MediaScanner = (() => {
     job.progress = 0; job.message = 'Starting…';
     try {
       if (job.item.type === 'playlist' || job.item.mode || job.pageFallback) {
-        const mode = job.rawPlaylist ? 'raw-playlist' : job.item.kind === 'dash' ? 'manifest' : job.item.kind === 'hls' ? 'hls' : job.item.mode || 'file';
+        const mode = job.item.kind === 'dash' ? 'manifest' : job.item.kind === 'hls' ? 'hls' : job.item.mode || 'file';
         const params = new URLSearchParams({ mode, url: job.item.url, name: job.item.filename,
           size: job.item.size || 0, job: job.id, sourceTab: job.tabId,
           frame: job.item.frameId || 0, referrer: job.item.referrer || '', auto: '1' });
@@ -198,16 +219,22 @@ globalThis.MediaScanner = (() => {
       if (job.status === 'running') active++;
     }
   }
-  async function enqueue(tabId, urls, rawPlaylist = false) {
+  async function enqueue(tabId, urls) {
+    for (const url of urls) {
+      const item = await serial(tabId, state => state.entries[url]);
+      if (item?.type === 'playlist') {
+        const protection = await inspect(tabId, url);
+        if (protection.status !== 'clear') continue;
+      }
+    }
     const items = await serial(tabId, state => urls.slice(0, LIMIT).map(url => state.entries[url]).filter(Boolean));
     return jobs(async list => {
       const ids = [];
       for (const item of items) {
-        if (!allowed(item.url, item.referrer) || (item.protection?.status === 'protected' && !rawPlaylist)) continue;
-        if (rawPlaylist && item.type !== 'playlist') continue;
+        if (!allowed(item.url, item.referrer) || (item.type === 'playlist' && item.protection?.status !== 'clear')) continue;
         const existing = list.find(j => j.tabId === tabId && j.item.url === item.url && ['queued', 'running'].includes(j.status));
         if (existing) { ids.push(existing.id); continue; }
-        const job = { id: crypto.randomUUID(), tabId, item, rawPlaylist, status: 'queued', attempts: 0, progress: 0, message: 'Queued' };
+        const job = { id: crypto.randomUUID(), tabId, item, status: 'queued', attempts: 0, progress: 0, message: 'Queued' };
         list.push(job); ids.push(job.id);
       }
       await pump(list);
@@ -259,7 +286,8 @@ globalThis.MediaScanner = (() => {
       await pump(list);
       return structuredClone(list.filter(j => j.tabId === tabId));
     });
-    return { items: Object.values(state.entries).sort((a, b) => b.seen - a.seen), blobs: state.blobs, jobs: taskList };
+    return { items: Object.values(state.entries).sort((a, b) => b.seen - a.seen), blobs: state.blobs, segments: state.segments,
+      debug: { networkHits: state.networkHits || 0, domHits: state.domHits || 0, tabId, scanError: state.scanError || '' }, jobs: taskList };
   }
 
   const filter = { urls: ['http://*/*', 'https://*/*'] };
@@ -295,9 +323,9 @@ globalThis.MediaScanner = (() => {
       if (msg.cmd === 'scanner.dom') return dom(msg, sender);
       if (msg.cmd === 'scanner.list') return snapshot(msg.tabId);
       if (msg.cmd === 'scanner.refresh') { await refresh(msg.tabId); return snapshot(msg.tabId); }
-      if (msg.cmd === 'scanner.clear') return serial(msg.tabId, state => { state.entries = {}; state.blobs = 0; });
+      if (msg.cmd === 'scanner.clear') return serial(msg.tabId, state => Object.assign(state, blank(), { pageUrl: state.pageUrl }));
       if (msg.cmd === 'scanner.inspect') return inspect(msg.tabId, msg.url);
-      if (msg.cmd === 'scanner.download') return enqueue(msg.tabId, msg.urls || [], msg.rawPlaylist === true);
+      if (msg.cmd === 'scanner.download') return enqueue(msg.tabId, msg.urls || []);
       if (msg.cmd === 'scanner.progress') return progress(msg, sender);
       if (msg.cmd === 'scanner.fetch') {
         const response = await fetchMedia(msg.url, { tabId: msg.tabId, frameId: msg.frameId, referrer: msg.referrer }, { headers: msg.range ? { Range: msg.range } : {} });

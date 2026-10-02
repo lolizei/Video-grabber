@@ -2,7 +2,7 @@
 // Watches network responses per tab and records anything that looks like a video/audio file or stream.
 
 importScripts('config.js');
-const CFG = globalThis.VG_CONFIG || { enableYouTube: true };
+const CFG = { ...(globalThis.VG_CONFIG || {}), enableYouTube: globalThis.VG_CONFIG?.ENABLE_YOUTUBE ?? globalThis.VG_CONFIG?.enableYouTube ?? true };
 
 const MEDIA_EXT = /\.(mp4|webm|mkv|mov|m4v|flv|avi|ogv|3gp|mp3|m4a|aac|ogg|opus|wav|flac)(\?|#|$)/i;
 const HLS_EXT = /\.m3u8(\?|#|$)/i;
@@ -182,7 +182,7 @@ chrome.tabs.onRemoved.addListener(tabId => { clearTab(tabId); lastUrl.delete(tab
 
 // ---------- messages from popup ----------
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-  if (msg.cmd?.startsWith('scanner.')) return;
+  if (msg.cmd?.startsWith('scanner.') || msg.cmd?.startsWith('youtube.')) return;
   (async () => {
     if (msg.cmd === 'list') {
       const list = await getList(msg.tabId);
@@ -216,3 +216,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
 });
 
 importScripts('shared/media.js', 'shared/playlists.js', 'background/scanner.js');
+if (CFG.ENABLE_YOUTUBE ?? CFG.enableYouTube) importScripts('shared/youtube.js','background/youtube.js');

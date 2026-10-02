@@ -57,6 +57,11 @@ button:disabled { opacity: .5; cursor: default; }
 #video-panel, #media-panel { overflow-y: auto; flex: 1; min-height: 0; }
 [hidden] { display: none !important; }
 #media-panel { padding: 8px 12px; }
+#youtube-panel { overflow-y: auto; padding: 8px 12px; }
+#youtube-panel h3 { margin: 4px 0; font-size: 14px; }
+#youtube-panel label { display: block; margin-top: 8px; }
+#youtube-panel select { width: 100%; font: inherit; padding: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; }
+#youtube-progress { width: 100%; accent-color: var(--accent); }
 .scanner-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .scanner-filters { display: flex; gap: 4px; }
 .scanner-filters button { font-size: 11px; padding: 4px 8px; border-radius: 16px; }

@@ -1,5 +1,6 @@
 (() => {
-  if (globalThis.VGDomScan) return;
+  // Reinjection must replace handlers from an invalidated extension context.
+  try { globalThis.VGDomCleanup?.(); } catch {}
   const extensions = /\.(mp3|m4a|aac|ogg|wav|flac|opus|mp4|webm|m3u8|mpd)(?:[?#]|$)/i;
   function collect() {
     const urls = new Map();
@@ -27,11 +28,13 @@
   globalThis.VGDomScan = collect;
   const send = () => chrome.runtime.sendMessage({ cmd: 'scanner.dom', ...collect() }).catch(() => {});
   const schedule = () => { clearTimeout(timer); timer = setTimeout(send, 400); };
-  new MutationObserver(schedule).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href'] });
+  const mutations = new MutationObserver(schedule);
+  mutations.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['src', 'href'] });
   document.addEventListener('loadedmetadata', schedule, true);
   document.addEventListener('play', schedule, true);
-  try { new PerformanceObserver(schedule).observe({ type: 'resource', buffered: true }); } catch {}
-  chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  let resources;
+  try { resources = new PerformanceObserver(schedule); resources.observe({ type: 'resource', buffered: true }); } catch {}
+  const onMessage = (msg, _sender, reply) => {
     if (msg.cmd === 'scanner.collect') { reply(collect()); return; }
     if (msg.cmd !== 'scanner.pageFetch') return;
     (async () => {
@@ -64,6 +67,13 @@
       } catch (error) { reply({ ok: false, error: error.message }); }
     })();
     return true;
-  });
+  };
+  chrome.runtime.onMessage.addListener(onMessage);
+  globalThis.VGDomCleanup = () => {
+    clearTimeout(timer); mutations.disconnect(); resources?.disconnect();
+    document.removeEventListener('loadedmetadata', schedule, true);
+    document.removeEventListener('play', schedule, true);
+    try { chrome.runtime.onMessage.removeListener(onMessage); } catch {}
+  };
   send();
 })();

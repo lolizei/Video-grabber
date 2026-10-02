@@ -18,8 +18,10 @@ Video Grabber is a browser extension that finds videos on the page you are viewi
 - **Download queue.** Selected media URLs, filenames and job status are kept in temporary browser session
   storage so downloads continue when the popup closes or the service worker restarts. Up to 100 completed
   or failed jobs are retained until the browser session ends. Active downloads can finish after the source
-  tab closes. Playlist/segment/key requests go directly to the media host; a permitted fallback uses the
-  original page and its existing session. All merging, AES-128 decryption and MP4 conversion happen locally.
+  tab closes. Unencrypted playlist/segment requests go directly to the media host; a permitted fallback uses the
+  original page and its existing session. Encrypted playlists are blocked. All merging and MP4/MP3 conversion
+  happen locally. The full build stores one YouTube conversion job in session storage and uses the already
+  detected media URLs, with a bundled FFmpeg worker; no conversion data is uploaded to a processing server.
 
 ## What the extension does not do
 
@@ -36,7 +38,7 @@ Video Grabber is a browser extension that finds videos on the page you are viewi
 | `downloads` | To save selected media and monitor download progress and errors |
 | `storage` | To keep per-tab detections and download queue state in temporary session storage |
 | `scripting` | To rescan already-open pages/frames on Refresh and preserve the existing video/Instagram lookup; declarative content scripts automatically scan media links |
-| HTTP/HTTPS site access | Media can be on any web page, and its files often come from other servers (CDNs) |
+| `<all_urls>` host access | Media can be on arbitrary pages and CDNs; Chrome still restricts protected browser pages |
 
 ## Contact
 

@@ -13,6 +13,7 @@
   <nav class="popup-tabs" role="tablist" aria-label="Media tools">
     <button id="video-tab" role="tab" aria-selected="true" aria-controls="video-panel">Video Grabber</button>
     <button id="media-tab" class="ghost" role="tab" aria-selected="false" aria-controls="media-panel">Media Scanner</button>
+    <button id="youtube-tab" class="ghost" role="tab" aria-selected="false" aria-controls="youtube-panel">YouTube</button>
   </nav>
   <div id="video-panel" role="tabpanel" aria-labelledby="video-tab">
   <div id="tip" class="tip" hidden></div>
@@ -34,6 +35,19 @@
     <p id="media-note" class="tip" hidden></p>
     <ul id="media-list"></ul>
     <p id="media-empty" class="muted empty">No media detected.<br>Play media or click Refresh to scan links on this page.</p>
+    <p id="media-debug" class="muted status" aria-live="polite"></p>
+  </section>
+  <section id="youtube-panel" role="tabpanel" aria-labelledby="youtube-tab" hidden>
+    <h3 id="youtube-title">YouTube</h3>
+    <p id="youtube-tracks" class="muted"></p>
+    <label for="youtube-output">Output</label>
+    <select id="youtube-output"><option value="mp4">MP4 (video+audio)</option><option value="mp3">MP3 (audio only)</option></select>
+    <label id="youtube-quality-label" for="youtube-quality">Video quality</label><select id="youtube-quality"></select>
+    <label id="youtube-bitrate-label" for="youtube-bitrate" hidden>MP3 bitrate</label>
+    <select id="youtube-bitrate" hidden><option value="128">128 kbps</option><option value="192" selected>192 kbps</option><option value="320">320 kbps</option></select>
+    <p class="muted status">Quality options use detected tracks. A higher MP3 bitrate does not improve the original audio quality.</p>
+    <div class="actions"><button id="youtube-start">Download and convert</button><button id="youtube-cancel" class="ghost" hidden>Cancel</button></div>
+    <p id="youtube-status" class="status" aria-live="polite"></p><progress id="youtube-progress" max="1" hidden></progress>
   </section>
   <footer>
     <button id="ytdlp" class="ghost" title="Copy a yt-dlp command for this page">Copy yt-dlp command</button>
@@ -44,5 +58,6 @@
   <script src="shared/media.js"></script>
   <script src="popup.js"></script>
   <script src="ui/media-tab.js"></script>
+  <script src="ui/youtube-tab.js"></script>
 </body>
 </html>
