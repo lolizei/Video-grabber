@@ -60,7 +60,19 @@ async function addMedia(tabId, entry) {
   await saveList(tabId, list);
 }
 
-async function clearTab(tabId) {
+async function clearTab(tabId, forget = true) {
+  const recoveryKey = 'recovery_' + tabId;
+  if (forget) {
+    await chrome.storage.session.remove(recoveryKey);
+  } else {
+    // A playing stream may make no more requests for its manifest or buffered file.
+    // Keep its detected URLs until navigation so Refresh can discover it again.
+    const previous = (await chrome.storage.session.get(recoveryKey))[recoveryKey] || {};
+    const recovery = { ...previous, ...await getList(tabId) };
+    const keys = Object.keys(recovery).sort((a, b) => recovery[b].ts - recovery[a].ts);
+    for (const key of keys.slice(MAX_PER_TAB)) delete recovery[key];
+    await chrome.storage.session.set({ [recoveryKey]: recovery });
+  }
   cache.set(tabId, Promise.resolve({}));
   await chrome.storage.session.remove('tab_' + tabId);
   chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
@@ -173,9 +185,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   (async () => {
     if (msg.cmd === 'list') {
       const list = await getList(msg.tabId);
+      const recovery = (await chrome.storage.session.get('recovery_' + msg.tabId))['recovery_' + msg.tabId] || {};
+      for (const [key, entry] of Object.entries(recovery)) {
+        if (!list[key]) list[key] = entry;
+      }
+      // Resource Timing also finds requests made before the popup was opened,
+      // including HLS manifests hidden behind a blob: player URL.
+      for (const url of msg.resourceUrls || []) {
+        const entry = classify({ url, method: 'GET', responseHeaders: [] });
+        if (entry && !list[entry.key]) list[entry.key] = { ...entry, ts: 1 };
+      }
+      const keys = Object.keys(list).sort((a, b) => list[b].ts - list[a].ts);
+      for (const key of keys.slice(MAX_PER_TAB)) delete list[key];
+      await saveList(msg.tabId, list);
       reply(Object.values(list).sort((a, b) => b.ts - a.ts));
     } else if (msg.cmd === 'clear') {
-      await clearTab(msg.tabId);
+      await clearTab(msg.tabId, false);
       reply(true);
     } else if (msg.cmd === 'download') {
       try {

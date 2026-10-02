@@ -32,12 +32,12 @@ function fileName(item, base = pageTitle()) {
 // Finds direct media links in <video>, <source>, og:video and <a> tags
 function scanDom() {
   const out = new Set();
-  const add = u => { try { const x = new URL(u, location.href); if (/^https?:$/.test(x.protocol)) out.add(x.href); } catch {} };
+  const add = u => { if (!u) return; try { const x = new URL(u, location.href); if (/^https?:$/.test(x.protocol)) out.add(x.href); } catch {} };
   document.querySelectorAll('video, audio').forEach(v => { add(v.currentSrc); add(v.src); });
   document.querySelectorAll('video source, audio source').forEach(s => add(s.src));
   document.querySelectorAll('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"]').forEach(m => add(m.content));
   document.querySelectorAll('a[href]').forEach(a => { if (/\.(mp4|webm|mov|m4v|mkv|m3u8)(\?|$)/i.test(a.href)) add(a.href); });
-  return [...out];
+  return { domUrls: [...out], resourceUrls: performance.getEntriesByType('resource').map(entry => entry.name) };
 }
 
 // Instagram: finds the post/reel you're looking at and asks Instagram for its full video (with audio) + thumbnail
@@ -262,11 +262,15 @@ async function load() {
   }
 
   // 2) Everything sniffed from the network + DOM
-  let items = await chrome.runtime.sendMessage({ cmd: 'list', tabId: tab.id }) || [];
+  let results = [];
   try {
-    const results = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: scanDom });
+    results = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: scanDom });
+  } catch { /* chrome:// pages etc. can't be scripted */ }
+  let items = await chrome.runtime.sendMessage({ cmd: 'list', tabId: tab.id,
+    resourceUrls: results.flatMap(r => r.result?.resourceUrls || []) }) || [];
+  {
     const known = new Set(items.map(i => i.url.split('?')[0]));
-    for (const r of results) for (const url of r.result || []) {
+    for (const r of results) for (const url of r.result?.domUrls || []) {
       const k = url.split('?')[0];
       if (known.has(k)) continue;
       known.add(k);
@@ -274,7 +278,7 @@ async function load() {
       items.push({ key: url, url, kind: hls ? 'hls' : 'file', label: hls ? 'HLS stream (.m3u8)' : 'Video on page',
                    host: hostOf(url), size: 0, ts: 1, track: 'v' });
     }
-  } catch { /* chrome:// pages etc. can't be scripted */ }
+  }
   const groups = groupStreams(items);
 
   // Tip bar
@@ -326,7 +330,12 @@ async function load() {
 }
 
 $('#refresh').onclick = load;
-$('#clear').onclick = async () => { await chrome.runtime.sendMessage({ cmd: 'clear', tabId: tab.id }); load(); };
+$('#clear').onclick = async () => {
+  await chrome.runtime.sendMessage({ cmd: 'clear', tabId: tab.id });
+  $('#list').innerHTML = '';
+  $('#count').textContent = '';
+  $('#empty').hidden = false;
+};
 if (!CFG.enableYouTube) $('#ytdlp').hidden = true;
 $('#ytdlp').onclick = async e => {
   await navigator.clipboard.writeText(`yt-dlp "${tab.url}"`);
