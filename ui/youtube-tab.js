@@ -25,12 +25,45 @@
       'No direct YouTube tracks detected. If the extension was just installed or reloaded, reload this video page and start playback, then Refresh.';
     $('#youtube-debug').textContent=`${diagnostics.networkHits||0} network hits, ${diagnostics.resourceHits||0} media requests (${diagnostics.totalResources||0} total), ${diagnostics.metadataHits||0} direct player URLs, ${diagnostics.players||0} players, ${diagnostics.unsupportedHits||diagnostics.unsupportedResources||0} unsupported, ${diagnostics.failedHits||0} failed · tab id ${tabId??'unknown'}${diagnostics.error?' · '+diagnostics.error:''}${!items.length&&diagnostics.metadataError?' · '+diagnostics.metadataError:''}${diagnostics.metadataSkipped?' · '+diagnostics.metadataSkipped+' ciphered/protected or URL-less entries skipped':''}${diagnostics.config?' · config: '+diagnostics.config:''}${diagnostics.metadataSource?' · metadata: '+diagnostics.metadataSource:''}${diagnostics.playability&&diagnostics.playability!=='OK'?' · playability: '+diagnostics.playability:''}`;
   }
+  // Stage numbering shown to the user (1–3 detection in the popup, 4–8 in the download tab).
+  const STAGE_NUMBERS={connect:4,'download-video':5,'download-audio':6,convert:7,save:8,verify:8,done:8};
+  const STAGE_LABELS={connect:'Connecting to media server','download-video':'Downloading video','download-audio':'Downloading audio',
+    convert:'Merging or converting',save:'Saving completed file',verify:'Saving completed file (verifying)',done:'Done'};
+  let lastJob=null;
+  function detectionReport(){
+    const d=diagnostics||{};
+    return {
+      '1 Detecting media':{pageScan:d.error||'ok',players:d.players||0,pageResources:d.totalResources||0,googlevideoRequests:d.resourceHits||0,
+        observedNetworkHits:d.networkHits||0,unsupportedUmpSabr:(d.unsupportedHits||0)+(d.unsupportedResources||0),failedResponses:d.failedHits||0},
+      '2 Retrieving metadata':{source:d.metadataSource||'(none)',error:d.metadataError||'',playability:d.playability||'',formatsListed:d.totalFormats||0,
+        withDirectUrl:d.directFormats||0,ciphered:d.ciphered||0,withoutUrl:d.urlLess||0,serverAbrStreaming:!!d.unsupportedMetadata,drmFormats:d.drmFormats||0,live:!!d.live},
+      '3 Discovering tracks':{usableVideo:d.usableVideo||0,usableAudio:d.usableAudio||0,expired:d.expired||0,configuration:d.config||'',reason:d.configMessage||'',
+        tracks:d.trackList||[]}
+    };
+  }
+  function renderDiagnostics(){
+    const job=lastJob;
+    const data={extension:chrome.runtime.getManifest?.().version||'',page:'YouTube watch page (URL omitted)',detection:detectionReport(),
+      job:job?{status:job.status,output:job.output,message:job.message,diagnostics:job.diagnostics||null}:null};
+    $('#youtube-diag-text').textContent=JSON.stringify(data,null,2);
+    const stage=job?.diagnostics?.stage;
+    $('#youtube-stage').textContent=job&&job.status==='running'&&stage&&STAGE_NUMBERS[stage]?`Stage ${STAGE_NUMBERS[stage]}/8 · ${STAGE_LABELS[stage]}`
+      :job&&job.status==='failed'&&stage&&STAGE_NUMBERS[stage]&&!items.length?`Last job failed at stage ${STAGE_NUMBERS[stage]}/8 · ${STAGE_LABELS[stage]}`
+      :items.length?'Stage 3/8 · Discovering tracks · '+items.length+' usable track'+(items.length===1?'':'s'):
+      diagnostics.config?'Stage 3/8 · Discovering tracks · none usable':'';
+  }
+  $('#youtube-copy-diag').onclick=async()=>{
+    try{await navigator.clipboard.writeText($('#youtube-diag-text').textContent);$('#youtube-copy-diag').textContent='Copied ✓';}
+    catch{$('#youtube-copy-diag').textContent='Copy failed – select the text instead';}
+    setTimeout(()=>{$('#youtube-copy-diag').textContent='Copy diagnostics';},1500);
+  };
   async function jobStatus() {
     try {
       const job=await request('status');
+      lastJob=job;renderDiagnostics();
       if(job) {
-        $('#youtube-status').textContent=job.message;
-        $('#youtube-progress').value=job.progress||0;$('#youtube-progress').hidden=false;
+        $('#youtube-status').textContent=job.status==='running'?job.message:`Last job (${job.title||'YouTube'} · ${String(job.output).toUpperCase()}): ${job.message}`;
+        $('#youtube-progress').value=job.progress||0;$('#youtube-progress').hidden=job.status!=='running';
         $('#youtube-cancel').hidden=job.status!=='running';
         $('#youtube-start').disabled=job.status==='running'||!items.length||($('#youtube-output').value==='mp4'&&!$('#youtube-quality').value);
       } else {$('#youtube-progress').hidden=true;$('#youtube-cancel').hidden=true;}
@@ -43,8 +76,9 @@
       const isYouTube=tab && /(^|\.)(youtube\.com|youtu\.be)$/.test(new URL(tab.url).hostname);
       $('#youtube-title').textContent=tab?.title||'YouTube';
       const detected=isYouTube?await request('tracks',{tabId}):{items:[],debug:{}};
+      if(!items.length&&!diagnostics.config)$('#youtube-stage').textContent='Stage 1–2/8 · Detecting media and retrieving metadata…';
       items=detected.items;diagnostics=detected.debug;
-      renderTracks();
+      renderTracks();renderDiagnostics();
       if(!isYouTube)$('#youtube-tracks').textContent='Open a YouTube video page and start playback to detect available tracks.';
       await jobStatus();
     } catch(error){$('#youtube-status').textContent=error.message;}

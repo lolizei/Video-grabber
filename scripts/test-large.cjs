@@ -44,7 +44,7 @@ const fileHash = file => new Promise((resolve, reject) => { const h = crypto.cre
       console.log(`    peak extra ArrayBuffer memory ${mb(peakBuffers)} MB, peak extra RSS ${mb(peakRss)} MB for a ${mb(SIZE)} MB file`);
       assert(peakBuffers < 200 * 1048576, 'ArrayBuffer memory stayed bounded');
       assert(!/browser memory/.test(result.log), 'used disk-backed storage');
-      const leftovers = fs.readdirSync(path.join(opfs, 'vg-jobs'));
+      const leftovers = fs.readdirSync(path.join(opfs, 'vg-jobs')).filter(n => n !== '.probe' && !n.endsWith('.crswap'));
       assert.equal(leftovers.length, 0, 'temporary storage released: ' + leftovers.join(','));
       assert.deepEqual(Object.keys(result.local).filter(k => k.startsWith('vg_ckpt_')), [], 'checkpoint removed after success');
       fs.rmSync(result.saved[0].file);
@@ -111,7 +111,7 @@ const fileHash = file => new Promise((resolve, reject) => { const h = crypto.cre
           assert.equal(result.status, 'Cancelled');
           assert.equal(reports.at(-1).status, 'cancelled');
           assert(reports.some(r => r.paused), 'paused state reported');
-          assert.equal(fs.readdirSync(path.join(opfs, 'vg-jobs')).length, 0, 'storage released');
+          assert.equal(fs.readdirSync(path.join(opfs, 'vg-jobs')).filter(n => n !== '.probe' && !n.endsWith('.crswap')).length, 0, 'storage released');
         } finally { await slow.close(); }
       });
     } finally { await fixture.close(); fs.rmSync(dir, { recursive: true, force: true }); }

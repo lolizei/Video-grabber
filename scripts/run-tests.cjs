@@ -26,6 +26,7 @@ const tests = [
   // Optional: skipped (not failed) when Playwright or network access is unavailable.
   ['Real Chromium E2E – full build', 'test-browser-e2e.cjs', [], ['dist/full']],
   ['Real Chromium E2E – store build', 'test-browser-e2e.cjs', [], ['dist/store']],
+  ['Real Chromium – simulated YouTube pipeline', 'test-youtube-e2e.cjs', [], ['dist/full']],
   ['Public authorized test streams', 'test-public-streams.cjs']
 ];
 const only = process.argv.slice(2);

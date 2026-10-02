@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const H = require('./lib/harness.cjs');
 
-const ctx = H.vm.createContext({ URL, console, TextDecoder, TextEncoder, Uint8Array, Blob, Response, Headers, AbortController, AbortSignal,
+const ctx = H.vm.createContext({ URL, ReadableStream, console, TextDecoder, TextEncoder, Uint8Array, Blob, Response, Headers, AbortController, AbortSignal,
   DOMException, setTimeout, clearTimeout, crypto: require('node:crypto').webcrypto, atob, btoa });
 for (const f of H.SHARED) H.vm.runInContext(H.read(f), ctx);
 const E = ctx.DownloadEngine;
@@ -53,6 +53,18 @@ const fast = { baseDelay: 5, maxDelay: 20, random: () => 0.5 };
       return Promise.resolve(respond(200, bytes(3)));
     } });
     assert.equal(calls, 2); assert.equal(result.bytes.length, 3);
+  });
+  await H.check('slow but steadily progressing transfers are not killed by the timeout (throttled CDNs)', async () => {
+    let calls = 0;
+    const slowBody = () => new ReadableStream({ async start(controller) { for (let i = 0; i < 10; i++) { await H.settle(30); controller.enqueue(bytes(100)); } controller.close(); } });
+    const result = await E.fetchBytes('https://cdn.test/throttled.ts', { ...fast, timeoutMs: 80, fetchImpl: async (url, { signal }) => { calls++; return new Response(slowBody(), { status: 200, headers: { 'content-type': 'video/mp2t' } }); } });
+    assert.equal(calls, 1, 'no restart'); assert.equal(result.bytes.length, 1000);
+    // A stream that stops sending data is still aborted by the idle timeout.
+    let stalled = 0;
+    await assert.rejects(E.fetchBytes('https://cdn.test/stalled.ts', { ...fast, retries: 1, timeoutMs: 80, fetchImpl: async (url, { signal }) => { stalled++;
+      return new Response(new ReadableStream({ start(c) { c.enqueue(bytes(10)); signal.addEventListener('abort', () => c.error(signal.reason)); } }), { status: 200, headers: { 'content-type': 'video/mp2t' } }); } }),
+      error => /No data received/.test(error.message));
+    assert.equal(stalled, 2);
   });
   await H.check('page-context fallback is used for 403 responses', async () => {
     const result = await E.fetchBytes('https://cdn.test/ref.ts', { ...fast, fetchImpl: async () => respond(403), fallback: async () => respond(200, bytes(7)) });

@@ -32,8 +32,34 @@ globalThis.YouTubeTools = (() => {
     if (job.output === 'mp3') return ['-i','audio.input','-map','0:a:0','-vn','-c:a','libmp3lame','-b:a',job.bitrate+'k','output.mp3'];
     const inputs = ['-i','video.input', ...(job.tracks.audio ? ['-i','audio.input'] : [])];
     const maps = ['-map','0:v:0','-map',job.tracks.audio ? '1:a:0' : '0:a:0'];
-    const codec = job.tracks.video.mime.includes('mp4') ? ['-c:v','copy'] : ['-c:v','libx264','-preset','veryfast','-crf','23'];
-    return [...inputs,...maps,...codec,'-c:a','aac','-b:a','192k','-movflags','+faststart','-shortest','output.mp4'];
+    const plan = conversionPlan(job);
+    const video = plan.copyVideo ? ['-c:v','copy'] : ['-c:v','libx264','-preset','veryfast','-crf','23'];
+    const audio = plan.copyAudio ? ['-c:a','copy'] : ['-c:a','aac','-b:a','192k'];
+    return [...inputs,...maps,...video,...audio,'-movflags','+faststart','-shortest','output.mp4'];
   }
-  return { chooseTracks, args };
+  // H.264, VP9 and AV1 are stored in MP4 without re-encoding (re-encoding high resolutions in
+  // single-threaded WebAssembly can take longer than the video itself). AAC audio is copied;
+  // Opus/Vorbis audio is encoded to AAC (fast) for broad player compatibility.
+  function conversionPlan(job) {
+    const vmime = String(job.tracks.video?.mime || '') + ' ' + String(job.tracks.video?.codecs || '');
+    const amime = String((job.tracks.audio || job.tracks.video)?.mime || '') + ' ' + String((job.tracks.audio || job.tracks.video)?.codecs || '');
+    const copyVideo = /avc1|avc3|vp09|vp9|vp8|av01|video\/mp4|video\/webm/i.test(vmime);
+    const copyAudio = job.tracks.audio ? /mp4a|audio\/mp4/i.test(amime) && !/opus|vorbis|webm/i.test(amime) : /video\/mp4/i.test(vmime);
+    return { copyVideo, copyAudio, description: (copyVideo ? 'copy video' : 'encode H.264') + ' · ' + (copyAudio ? 'copy AAC audio' : 'encode AAC audio') };
+  }
+  // Reads the first MPEG audio frame header (after an ID3v2 tag) to verify MP3 output.
+  function mp3Info(bytes) {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let o = 0;
+    if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) o = 10 + ((b[6] & 127) << 21 | (b[7] & 127) << 14 | (b[8] & 127) << 7 | (b[9] & 127));
+    const rates = [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320];
+    for (let tries = 0; o + 4 <= b.length && tries < 65536; o++, tries++) {
+      if (b[o] !== 0xff || (b[o + 1] & 0xe0) !== 0xe0) continue;
+      const version = (b[o + 1] >> 3) & 3, layer = (b[o + 1] >> 1) & 3, index = b[o + 2] >> 4;
+      if (version !== 3 || layer !== 1 || !index || index === 15) continue; // MPEG-1 Layer III
+      return { ok: true, bitrate: rates[index], offset: o };
+    }
+    return { ok: false };
+  }
+  return { chooseTracks, args, conversionPlan, mp3Info };
 })();

@@ -79,6 +79,15 @@ Verify every saved file by playing it in the browser or VLC, and with `ffprobe` 
 
 ## 7. YouTube (full build only; both browsers)
 
+See [YOUTUBE-DIAGNOSTICS.md](YOUTUBE-DIAGNOSTICS.md). For every video you test, record the **Stage** line
+and the `configuration`, `stage` and `lastStatus` values from **Diagnostics → Copy diagnostics**.
+
+- [ ] The YouTube tab shows `Stage 3/8 · Discovering tracks` with a track count, or the exact reason for zero tracks (UMP/SABR, ciphered, DRM, sign-in, expired, live).
+- [ ] During a conversion the popup and the download tab show stages 4–8 in order; each finished stage shows ✓ and its duration.
+- [ ] Copy diagnostics: the pasted text contains no `sig=`, `lsig=`, `pot=`, `n=`, `expire=`, IP addresses, cookies or the watch-page URL.
+- [ ] A failing video shows *Failed at "<stage>": <error>* with the HTTP status where relevant; nothing is saved.
+- [ ] A video whose best quality is VP9-only (e.g. 1440p): MP4 conversion finishes in seconds, not minutes, and the file contains VP9 video + AAC audio.
+
 Use a video you own or that is licensed for download (for example your own upload).
 
 - [ ] Play the video, open **YouTube**, Refresh. Either tracks appear with qualities (and audio languages for multi-language videos), or the tab names the configuration (UMP/SABR, ciphered, DRM, sign-in required, live, expired) instead of a generic empty message. Record which configuration you observed.

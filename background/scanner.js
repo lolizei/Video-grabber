@@ -379,6 +379,7 @@ globalThis.MediaScanner = (() => {
         const tab = await chrome.tabs.create({ url: chrome.runtime.getURL('downloader.html') + '?' + params, active: false });
         job.workerTab = tab.id;
         job.message = 'Downloading in a tab…';
+        job.lastProgressAt = Date.now();
       } else {
         // Catch login/error pages before handing a direct file to Chrome downloads.
         // Some signed CDNs disallow HEAD; a failed probe leaves the normal GET path available.
@@ -487,6 +488,7 @@ globalThis.MediaScanner = (() => {
       if (!job) return;
       job.progress = Math.max(0, Math.min(1, Number(msg.progress) || 0));
       job.message = String(msg.message || '').slice(0, 500);
+      if (Number(msg.bytes) !== job.bytes || job.phase !== msg.phase) job.lastProgressAt = Date.now();
       job.phase = String(msg.phase || 'download').slice(0, 20);
       job.paused = !!msg.paused;
       job.speed = Number(msg.speed) || 0; job.eta = msg.eta === null || msg.eta === undefined ? null : Number(msg.eta);
@@ -561,15 +563,26 @@ globalThis.MediaScanner = (() => {
                 const instant = (received - (job.lastBytes || 0)) / ((now - job.lastTime) / 1000);
                 job.speed = job.speed ? Math.round(job.speed * 0.6 + instant * 0.4) : Math.round(instant);
               }
+              if (received !== job.lastBytes || !job.lastChange) job.lastChange = now;
               job.lastBytes = received; job.lastTime = now;
               job.paused = !!download.paused;
               job.bytes = received; job.total = download.totalBytes > 0 ? download.totalBytes : 0;
               job.progress = job.total ? received / job.total : 0;
               const end = download.estimatedEndTime ? Date.parse(download.estimatedEndTime) : NaN;
               job.eta = Number.isFinite(end) ? Math.max(0, Math.round((end - now) / 1000)) : job.total && job.speed > 0 ? Math.round((job.total - received) / job.speed) : null;
-              job.message = job.paused ? 'Paused' : job.total ? `Downloading · ${Math.round(job.progress * 100)}%` : `Downloading · ${received} bytes`;
+              const waitingForDialog = !received && !download.filename;
+              const stalled = !job.paused && now - job.lastChange > 60000;
+              job.message = job.paused ? 'Paused'
+                : waitingForDialog ? 'Waiting for you to choose where to save the file (check for a Save dialog behind this window).'
+                : stalled ? `No data received for ${Math.round((now - job.lastChange) / 1000)} s – the server may be throttling or blocking this download. Cancel and retry, or replay the media and Refresh.`
+                : job.total ? `Downloading · ${Math.round(job.progress * 100)}%` : `Downloading · ${received} bytes`;
             }
-          } else if (job.workerTab !== undefined) await chrome.tabs.get(job.workerTab);
+          } else if (job.workerTab !== undefined) {
+            await chrome.tabs.get(job.workerTab);
+            const quiet = Date.now() - (job.lastProgressAt || Date.now());
+            if (!job.paused && quiet > 60000 && !/^No progress/.test(job.message || ''))
+              job.message = `No progress for ${Math.round(quiet / 1000)} s – open the "Downloading" tab for details. The server may be throttling or blocking this stream. ` + (job.message || '');
+          }
           else { job.status = 'failed'; job.message = 'Download was interrupted before it started. Retry.'; }
         } catch { job.status = 'failed'; job.message = 'Download tab was closed. Retry resumes completed segments when possible.'; }
       }

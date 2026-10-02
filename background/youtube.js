@@ -44,6 +44,8 @@ globalThis.YouTubeDownloads = (() => {
     if(meta.live&&meta.hls)return {config:'live-hls',configMessage:'Live stream: its HLS manifest was added to the Media Scanner tab, where it can be downloaded.'};
     if(debug.unsupportedHits||debug.unsupportedResources||meta.unsupported)
       return {config:'sabr',configMessage:'YouTube is using UMP/SABR segmented playback (server-driven streaming over POST requests). Those responses are a proprietary container that cannot be fetched as files, so no direct tracks are available.'};
+    if(meta.urlLess&&meta.total&&meta.urlLess===meta.total)
+      return {config:'sabr',configMessage:'The player lists '+meta.total+' format(s) without any download URL, which means YouTube streams this video only through UMP/SABR. No direct tracks are available.'};
     if(meta.ciphered)return {config:'ciphered',configMessage:'The player lists '+meta.ciphered+' format(s) whose URLs require signature deciphering. Video Grabber does not run or reimplement YouTube signature code.'};
     if(debug.failedHits)return {config:'failed',configMessage:'YouTube rejected '+debug.failedHits+' media request(s). Reload the page and play the video again.'};
     return {config:'none',configMessage:''};
@@ -92,6 +94,7 @@ globalThis.YouTubeDownloads = (() => {
           live:!!details.isLive,upcoming:!!details.isUpcoming||play.status==='LIVE_STREAM_OFFLINE',
           hls:data.hlsManifestUrl||'',dash:data.dashManifestUrl||'',unsupported:!!data.serverAbrStreamingUrl,drm,
           total:all.length,ciphered:all.filter(format=>format.signatureCipher||format.cipher).length,
+          urlLess:all.filter(format=>!format.url&&!format.signatureCipher&&!format.cipher).length,directCount:direct.length,
           drmFormats:all.filter(format=>format.drmFamilies?.length||format.drmTrackType).length,
           formats:direct.map(format=>({url:format.url,mime:format.mimeType||'',size:format.contentLength,quality:format.qualityLabel||'',
             bitrate:format.bitrate||0,width:format.width||0,height:format.height||0,fps:format.fps||0,
@@ -140,7 +143,11 @@ globalThis.YouTubeDownloads = (() => {
     const debug={tabId,networkHits:info.networkHits||0,failedHits:info.failedHits||0,resourceHits,totalResources,players,
       metadataHits,metadataSkipped,metadataError,unsupportedMetadata,unsupportedHits:info.unsupportedHits||0,unsupportedResources,blobs,error,
       metadataSource:meta.source||'',playability:meta.status||'',ciphered:meta.ciphered||0,drmFormats:meta.drmFormats||0,
-      totalFormats:meta.total||0,live:!!meta.live,hlsManifest:!!meta.hls,expired};
+      totalFormats:meta.total||0,urlLess:meta.urlLess||0,directFormats:meta.directCount||0,live:!!meta.live,hlsManifest:!!meta.hls,expired,
+      usableVideo:items.filter(entry=>entry.track!=='a'&&!(entry.expiresAt&&entry.expiresAt<=now)).length,
+      usableAudio:items.filter(entry=>entry.track!=='v'&&!(entry.expiresAt&&entry.expiresAt<=now)).length,
+      trackList:items.map(entry=>({itag:entry.itag,track:entry.track,quality:entry.quality,mime:entry.mime,codecs:entry.codecs||'',size:entry.size||0,
+        audioTrack:entry.audioTrack||'',expired:!!(entry.expiresAt&&entry.expiresAt<=now),url:globalThis.MediaTools?.redactUrl?MediaTools.redactUrl(entry.url):'(redacted)'}))};
     Object.assign(debug,diagnose(items.length-expired,meta,debug));
     return {items,debug};
   }
@@ -194,7 +201,20 @@ globalThis.YouTubeDownloads = (() => {
         if(!job || job.id!==msg.id || job.workerTab!==sender.tab?.id || job.status!=='running')return;
         job.progress=Math.max(0,Math.min(1,Number(msg.progress)||0));job.phase=msg.phase;
         job.message=String(msg.message||'').slice(0,500);
+        if(msg.diagnostics&&typeof msg.diagnostics==='object'){
+          const text=JSON.stringify(msg.diagnostics);
+          if(text.length<30000)job.diagnostics=JSON.parse(text);
+        }
         if(['complete','failed','cancelled'].includes(msg.status))job.status=msg.status;
+        if(msg.status==='complete'){
+          // Never accept "complete" without a saved, existing, non-empty file of the expected size.
+          const [item]=msg.downloadId!==undefined?await chrome.downloads.search({id:msg.downloadId}).catch(()=>[]):[];
+          const bytes=item?(item.fileSize>0?item.fileSize:item.bytesReceived):0;
+          const expected=job.diagnostics?.output?.bytes;
+          const problem=!item?'No saved file was reported.':item.state!=='complete'?'The file was not saved completely.':item.exists===false?'The saved file no longer exists.':
+            !(bytes>0)?'The saved file is empty.':expected&&bytes!==expected?'The saved file size does not match the converted output.':'';
+          if(problem){job.status='failed';job.message='Failed at "Saving completed file": '+problem;}
+        }
         await chrome.storage.session.set({youtube_job:job});return true;
       });
       throw new Error('Unknown YouTube command: '+msg.cmd);

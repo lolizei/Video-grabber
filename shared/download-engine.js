@@ -34,12 +34,16 @@ globalThis.DownloadEngine = (() => {
       });
     }
   }
+  // Idle timeout: aborts only when no response/data arrives for timeoutMs. Slow but progressing
+  // transfers (throttled CDNs) keep going instead of being restarted from zero.
   function combinedSignal(signal, timeoutMs) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(vgError('Request timed out after ' + Math.round(timeoutMs / 1000) + ' s.', 'timeout')), timeoutMs);
+    let timer;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => controller.abort(vgError('No data received for ' + Math.round(timeoutMs / 1000) + ' s.', 'timeout')), timeoutMs); };
+    arm();
     const stop = () => controller.abort(aborted());
     if (signal?.aborted) stop(); else signal?.addEventListener('abort', stop, { once: true });
-    return { signal: controller.signal, cleanup: () => { clearTimeout(timer); signal?.removeEventListener('abort', stop); } };
+    return { signal: controller.signal, touch: arm, cleanup: () => { clearTimeout(timer); signal?.removeEventListener('abort', stop); } };
   }
   async function readBody(response, { signal, onBytes, expected = 0, limit = 0 } = {}) {
     if (!response.body?.getReader) {
@@ -74,7 +78,7 @@ globalThis.DownloadEngine = (() => {
     for (let attempt = 1; attempt <= retries + 1; attempt++) {
       await gate?.wait(signal);
       if (signal?.aborted) throw aborted();
-      const { signal: requestSignal, cleanup } = combinedSignal(signal, timeoutMs);
+      const { signal: requestSignal, cleanup, touch } = combinedSignal(signal, timeoutMs);
       let response, failure;
       try {
         const headers = range ? { Range: `bytes=${range[0]}-${range[1]}` } : {};
@@ -103,7 +107,7 @@ globalThis.DownloadEngine = (() => {
         }
         if (!failure) {
           const expected = range ? range[1] - range[0] + 1 : 0;
-          const bytes = await readBody(response, { signal: requestSignal, onBytes, expected });
+          const bytes = await readBody(response, { signal: requestSignal, onBytes: n => { touch(); onBytes?.(n); }, expected });
           return { bytes, url: response.url || url, headers: response.headers, status: response.status };
         }
       } catch (error) {
@@ -227,9 +231,17 @@ globalThis.DownloadEngine = (() => {
     }
   }
   const Storage = {
+    // Disk-backed storage when the browser provides a working OPFS; null (memory) otherwise.
+    // Guarded by a timeout so a browser that blocks storage (privacy settings) never stalls a download.
     async root() {
       if (!globalThis.navigator?.storage?.getDirectory) return null;
-      try { return await (await navigator.storage.getDirectory()).getDirectoryHandle('vg-jobs', { create: true }); } catch { return null; }
+      const attempt = (async () => {
+        const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('vg-jobs', { create: true });
+        const probe = await dir.getFileHandle('.probe', { create: true });
+        if (typeof probe.createWritable !== 'function') return null;
+        return dir;
+      })().catch(() => null);
+      return Promise.race([attempt, new Promise(resolve => setTimeout(() => resolve(null), 5000))]);
     },
     // Returns { kind, sink(name, resume) , remove() } for one job.
     async open(key, options = {}) {
@@ -244,7 +256,7 @@ globalThis.DownloadEngine = (() => {
       const root = await this.root();
       if (!root?.keys) return 0;
       let removed = 0;
-      for await (const name of root.keys()) if (!keep.has(name)) { await root.removeEntry(name, { recursive: true }).catch(() => {}); removed++; }
+      for await (const name of root.keys()) if (!keep.has(name) && name !== '.probe') { await root.removeEntry(name, { recursive: true }).catch(() => {}); removed++; }
       return removed;
     }
   };

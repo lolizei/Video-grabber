@@ -103,21 +103,57 @@ const same = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a)), b, m);
 
   // youtube/download.js: invalid conversion output must never be saved or reported as complete.
   await H.check('conversion output that is not a valid MP4 fails instead of being saved', async () => {
-    const nodes = Object.fromEntries(['status', 'bar', 'progress', 'cancel', 'name', 'log'].map(id => ['#' + id, { style: {}, textContent: '' }]));
+    const nodes = Object.fromEntries(['status', 'bar', 'progress', 'cancel', 'name', 'log', 'stages', 'diagnostics', 'copy'].map(id => ['#' + id, { style: {}, textContent: '', replaceChildren() {} }]));
     const reports = [], saved = [];
     const job = { id: 'y', status: 'running', title: 'T', output: 'mp4', bitrate: 192, tracks: { video: { url: gv(137, '&mime=video%2Fmp4'), size: 4, mime: 'video/mp4' }, audio: { url: gv(140, '&mime=audio%2Fmp4'), size: 4, mime: 'audio/mp4' } } };
-    const ctx = H.vm.createContext({ console, URL: class extends URL { static createObjectURL() { return 'blob:x'; } static revokeObjectURL() {} }, URLSearchParams, Blob, DOMException, AbortController, AbortSignal,
+    const ctx = H.vm.createContext({ console, URL: class extends URL { static createObjectURL() { return 'blob:x'; } static revokeObjectURL() {} }, URLSearchParams, Blob, Response, DOMException, AbortController, AbortSignal,
       setTimeout, clearTimeout, Uint8Array, Date, TextDecoder, TextEncoder, location: { search: '?job=y' }, VG_CONFIG: { ENABLE_YOUTUBE: true },
-      document: { querySelector: s => nodes[s] },
+      document: { querySelector: s => nodes[s], createElement: () => ({}) },
       chrome: { runtime: { onMessage: H.event(), async sendMessage(m) { reports.push(m); } }, storage: { session: { async get() { return { youtube_job: job }; } } },
         downloads: { async download(o) { saved.push(o); return 1; }, async cancel() {}, onChanged: H.event(), async search() { return [{ state: 'complete' }]; } } },
-      async fetch() { return { ok: true, async arrayBuffer() { return new Uint8Array([1, 2, 3, 4]).buffer; } }; },
+      async fetch() { return new Response(new Uint8Array([1, 2, 3, 4])); },
       Worker: class { postMessage() { queueMicrotask(() => this.onmessage({ data: { type: 'done', data: new Uint8Array([0, 0, 0, 8, 0x66, 0x72, 0x65, 0x65]).buffer } })); } terminate() {} } });
-    for (const f of ['shared/media.js', 'shared/cdn.js', 'shared/drm.js', 'shared/mp4.js', 'shared/download-engine.js', 'youtube/download.js']) H.vm.runInContext(H.read(f), ctx);
+    for (const f of ['shared/media.js', 'shared/cdn.js', 'shared/drm.js', 'shared/mp4.js', 'shared/download-engine.js', 'shared/youtube.js', 'youtube/download.js']) H.vm.runInContext(H.read(f), ctx);
     for (let i = 0; i < 50 && !/Failed|Done/.test(nodes['#status'].textContent); i++) await H.settle(10);
     assert.equal(saved.length, 0);
-    assert.match(nodes['#status'].textContent, /Failed: Converted output is invalid/);
+    assert.match(nodes['#status'].textContent, /Failed at "Saving completed file": Converted output is invalid/);
     assert.equal(reports.at(-1).status, 'failed');
+  });
+  await H.check('conversion plan copies H.264/VP9/AV1 video and AAC audio; Opus is encoded to AAC', () => {
+    const plan = tracks => bg.context.YouTubeTools.conversionPlan({ tracks }).description;
+    assert.equal(plan({ video: { mime: 'video/webm', codecs: 'vp9' }, audio: { mime: 'audio/webm', codecs: 'opus' } }), 'copy video · encode AAC audio');
+    assert.equal(plan({ video: { mime: 'video/mp4', codecs: 'av01.0.08M.08' }, audio: { mime: 'audio/mp4', codecs: 'mp4a.40.2' } }), 'copy video · copy AAC audio');
+    assert.equal(plan({ video: { mime: 'video/3gpp' }, audio: { mime: 'audio/mp4' } }), 'encode H.264 · copy AAC audio');
+    const args = bg.context.YouTubeTools.args({ output: 'mp4', tracks: { video: { mime: 'video/webm' }, audio: { mime: 'audio/webm' } } });
+    assert(args.join(' ').includes('-c:v copy') && !args.includes('libx264'));
+  });
+  await H.check('MP3 frame verification reads the real bitrate (after ID3 tags)', () => {
+    const frame = rateIndex => [0xff, 0xfb, rateIndex << 4, 0x64];
+    assert.equal(bg.context.YouTubeTools.mp3Info(Uint8Array.from([...frame(9), 0, 0])).bitrate, 128);
+    const id3 = [0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 10, ...new Array(10).fill(0)];
+    assert.equal(bg.context.YouTubeTools.mp3Info(Uint8Array.from([...id3, ...frame(14)])).bitrate, 320);
+    assert.equal(bg.context.YouTubeTools.mp3Info(Uint8Array.from([0, 1, 2, 3])).ok, false);
+  });
+  await H.check('diagnostic URLs keep only itag/mime/clen: no signatures, tokens or IPs', () => {
+    const redacted = bg.context.MediaTools.redactUrl('https://rr1---sn-x.googlevideo.com/videoplayback?expire=1&ei=abc&ip=1.2.3.4&itag=140&mime=audio%2Fmp4&clen=99&sig=SECRET&lsig=L&pot=TOKEN&n=NN');
+    assert.match(redacted, /itag=140/); assert.match(redacted, /clen=99/);
+    assert(!/SECRET|TOKEN|1\.2\.3\.4|ei=|n=NN|expire/.test(redacted), redacted);
+  });
+  await H.check('formats listed without any URL are explained as UMP/SABR-only', async () => {
+    await reset();
+    page = { players: { movie_player: { getPlayerResponse: () => response({ adaptiveFormats: [{ itag: 137, mimeType: 'video/mp4' }, { itag: 140, mimeType: 'audio/mp4' }] }) } } };
+    const result = await tracks();
+    assert.equal(result.items.length, 0); assert.equal(result.debug.config, 'sabr'); assert.equal(result.debug.urlLess, 2);
+    assert.match(result.debug.configMessage, /without any download URL|UMP\/SABR/);
+  });
+  await H.check('background refuses "complete" when the saved file is missing or empty', async () => {
+    const job = { id: 'j1', status: 'running', workerTab: 77, title: 'T', output: 'mp3' };
+    await bg.chrome.storage.session.set({ youtube_job: job });
+    const downloadId = await bg.chrome.downloads.download({ url: 'blob:x', filename: 'x.mp3' });
+    Object.assign(bg.chrome.downloads.items.get(downloadId), { state: 'complete', fileSize: 0, bytesReceived: 0, exists: true });
+    await bg.request('youtube.progress', { id: 'j1', status: 'complete', progress: 1, message: 'Done', downloadId }, { tab: { id: 77 } });
+    const stored = (await bg.chrome.storage.session.get('youtube_job')).youtube_job;
+    assert.equal(stored.status, 'failed'); assert.match(stored.message, /empty/);
   });
   H.summary('YouTube itag/mime classification, audio-track selection, metadata sources, configuration diagnostics, live HLS hand-off, output validation');
 })().catch(error => { console.error(error); process.exitCode = 1; });

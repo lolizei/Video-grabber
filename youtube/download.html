@@ -4,5 +4,12 @@
   <h1 id="name">Preparing YouTube download…</h1>
   <p id="status" class="muted" aria-live="polite">Starting…</p>
   <div class="bar"><div id="bar"></div></div><p id="progress" class="muted"></p>
-  <button id="cancel">Cancel</button><pre id="log"></pre>
-</main><script src="../config.js"></script><script src="../shared/media.js"></script><script src="../shared/cdn.js"></script><script src="../shared/drm.js"></script><script src="../shared/mp4.js"></script><script src="../shared/download-engine.js"></script><script src="download.js"></script></body></html>
+  <button id="cancel">Cancel</button>
+  <h2 class="subhead">Pipeline</h2>
+  <ol id="stages" class="stages"></ol>
+  <pre id="log"></pre>
+  <details class="diagnostics"><summary>Diagnostics</summary>
+    <button id="copy" class="ghost">Copy diagnostics</button>
+    <pre id="diagnostics"></pre>
+  </details>
+</main><script src="../config.js"></script><script src="../shared/media.js"></script><script src="../shared/cdn.js"></script><script src="../shared/drm.js"></script><script src="../shared/mp4.js"></script><script src="../shared/download-engine.js"></script><script src="../shared/youtube.js"></script><script src="download.js"></script></body></html>

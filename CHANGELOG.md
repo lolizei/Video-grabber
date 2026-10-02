@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.2 – YouTube converter
+- Root cause analysis and fixes for the YouTube converter (see docs/YOUTUBE-DIAGNOSTICS.md)
+- Fix: VP9/AV1 video was re-encoded to H.264 in single-threaded WebAssembly (10 s of 1080p VP9 took 43.6 s, so long videos appeared stuck on "Converting"); H.264/VP9/AV1 video and AAC audio are now copied into MP4 (1.1 s for the same input)
+- Eight visible pipeline stages (detecting, metadata, tracks, connecting, video, audio, converting, saving) with per-stage duration, HTTP status and the actual error; the popup shows the current stage
+- New connection check before downloading (HTTP status, content type, byte-range support), memory guard for in-browser conversion, throttling warning with estimated time
+- Diagnostics panel with Copy diagnostics in the YouTube tab and the download tab; URLs are reduced to itag/mime/clen, no cookies, signatures, tokens, IPs or page URL
+- Player responses that list formats without URLs are reported as UMP/SABR instead of "no tracks"
+- MP3 output verified by its frame header (bitrate must match the request); "complete" is accepted only after the saved download is re-checked (exists, non-empty, matching size)
+- New real-browser test against a local YouTube simulation (`scripts/test-youtube-e2e.cjs`); WebAssembly tests extended to VP9/Opus and AV1 tracks
+
+## 1.5.1
+- Fix: slow but progressing downloads (throttled CDNs, YouTube) were aborted after 30 s per request/chunk and retried from zero, so they appeared to load forever. Timeouts now only trigger when no data arrives for 30 s
+- YouTube tab: progress, speed and time left update continuously within each chunk; a stalled stream fails with a clear message
+- Media Scanner: direct downloads show "waiting for the save dialog" and "no data received" hints; download-tab jobs show a hint when they stop reporting progress
+- Temporary-storage detection has a timeout and falls back to memory when a browser blocks or restricts it (privacy settings)
+
 ## 1.5.0 – Streaming & CDN engine
 - Discovery: redirect chains (keyed by the stable original URL), signed/expiring URL detection for CloudFront, AWS SigV4, Google Cloud, Akamai, Azure SAS, googlevideo, Meta, Wowza and secure-link tokens; re-signed URLs refresh the existing row; expired links are flagged; CDN provider from hostnames and response headers; segment requests counted per CDN host; originating website per row
 - Discovery: media embedded in inline scripts, JSON-LD, `data-*` player attributes, meta/preload tags, and sources exposed by JW Player, video.js and common player globals (read-only, on Refresh); Azure `format=m3u8/mpd` manifests; Smooth Streaming/HDS reported as unsupported

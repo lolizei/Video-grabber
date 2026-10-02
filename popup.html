@@ -51,7 +51,12 @@
     <select id="youtube-bitrate" hidden><option value="128">128 kbps</option><option value="192" selected>192 kbps</option><option value="320">320 kbps</option></select>
     <p class="muted status">Quality options use detected tracks. A higher MP3 bitrate does not improve the original audio quality.</p>
     <div class="actions"><button id="youtube-start">Download and convert</button><button id="youtube-cancel" class="ghost" hidden>Cancel</button></div>
+    <p id="youtube-stage" aria-live="polite"></p>
     <p id="youtube-status" class="status" aria-live="polite"></p><progress id="youtube-progress" max="1" hidden></progress>
+    <details id="youtube-diag"><summary>Diagnostics</summary>
+      <button id="youtube-copy-diag" class="ghost">Copy diagnostics</button>
+      <pre id="youtube-diag-text"></pre>
+    </details>
   </section>
   <footer>
     <button id="ytdlp" class="ghost" title="Copy a yt-dlp command for this page">Copy yt-dlp command</button>

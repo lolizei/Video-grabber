@@ -1,6 +1,6 @@
 # Video Grabber
 
-Manifest V3 Chrome extension for finding and saving media loaded by the current page. Version **1.5.0** adds a streaming & CDN engine: automatic discovery (network, DOM, embedded players, redirects, signed URLs), full HLS and MPEG-DASH downloading with separate audio/video merging, DRM/encryption diagnostics, a resumable disk-backed download manager with pause/cancel/speed/ETA, and a repaired YouTube detector with configuration diagnostics in the full build.
+Manifest V3 Chrome extension for finding and saving media loaded by the current page. Version **1.5.2** (1.5.0 plus download-stall fixes and a YouTube converter repair) adds a streaming & CDN engine: automatic discovery (network, DOM, embedded players, redirects, signed URLs), full HLS and MPEG-DASH downloading with separate audio/video merging, DRM/encryption diagnostics, a resumable disk-backed download manager with pause/cancel/speed/ETA, and a repaired YouTube detector with configuration diagnostics in the full build.
 
 Only save content you own, that is public domain, or that you have the right to save.
 
@@ -80,11 +80,13 @@ Download progress is followed by **Converting…** and saving through `chrome.do
 
 This feature reuses existing detected googlevideo tracks. It does not introduce signature-cipher extraction or protection-circumvention code. Refresh recovers direct tracks from the page's request history and current player metadata, including playback started before opening the popup, and updates automatically while the tab is open. Player metadata is read from the already-loaded page; ciphered/protected entries and stale responses from a previous video are skipped. Diagnostics distinguish no observed requests from unsupported UMP/SABR playback and count failed responses, total resources, players and direct metadata URLs. A blob player alone does not block usable HTTP tracks. Refresh expired URLs by replaying the source video. One YouTube conversion runs at a time. There are no fixed input-size caps; conversion still depends on available browser/WebAssembly memory.
 
+**1.5.2: pipeline stages and diagnostics.** The YouTube tab shows the current stage (1 detecting media, 2 retrieving metadata, 3 discovering tracks, 4 connecting to the media server, 5 downloading video, 6 downloading audio, 7 merging/converting, 8 saving) and a **Diagnostics** panel with **Copy diagnostics** (no cookies, signatures, tokens or page URL). H.264, VP9 and AV1 video is now copied into MP4 instead of being re-encoded, which previously made VP9-only qualities take several times the video's length. The whole pipeline was verified in real Chromium against a *local YouTube simulation*, **not against live YouTube**. See [YouTube diagnostics and root-cause analysis](docs/YOUTUBE-DIAGNOSTICS.md) for what each stage means and which playback configurations cannot be supported.
+
 **1.5.0 repair.** Code review of the 1.4.3 detector found these causes of missing tracks (verified with unit tests against recorded URL/metadata shapes, not against live YouTube, which this development environment cannot reach): unknown/new itags (for example 599/600/774 audio, AV1 694–702, HDR 330–337) were classified as *video* whenever the response carried no content type, so audio could be missing and "itag N" qualities appeared; multi-language and DRC audio renditions share an itag and overwrote each other; only `movie_player` and the possibly stale `ytInitialPlayerResponse` were read; and `/embed/` and `/live/` URLs yielded no video id. Now the URL's `mime`/`xtags` parameters decide track type and audio language, distinct renditions are kept (original, non-DRC audio preferred), player metadata is read from `movie_player`, `shorts-player`, `ytd-watch-flexy`, `ytd-player`, `ytplayer` and `ytInitialPlayerResponse` (only when it matches the current video id), and expired URLs are skipped.
 
 The most common remaining reason for "no tracks" is not a bug: when YouTube plays a video through **UMP/SABR** (server-driven POST requests) or lists only **signature-ciphered** formats, there are no directly fetchable track URLs. The tab now names the configuration — direct tracks, UMP/SABR, ciphered (no deciphering is performed), DRM, sign-in/age restriction, unplayable, upcoming, expired, or live (whose ordinary HLS manifest is handed to the Media Scanner) — instead of a generic empty state. Outputs are validated before saving, the saved size is verified, and HTTP 403 track URLs fail immediately with an explanation. YouTube conversion still holds both tracks in memory, because FFmpeg WebAssembly needs its inputs in its in-memory file system.
 
-FFmpeg WebAssembly is bundled and runs in a separate worker: MP4 inputs keep their video codec and encode AAC audio; other supported inputs transcode video to H.264; MP3 uses libmp3lame. No remote scripts or conversion servers are used.
+FFmpeg WebAssembly is bundled and runs in a separate worker: H.264, VP9 and AV1 video is copied into the MP4 without re-encoding, AAC audio is copied and Opus/Vorbis audio is encoded to AAC; only other video codecs are transcoded to H.264. MP3 uses libmp3lame and the output bitrate is verified. No remote scripts or conversion servers are used.
 
 ## Permissions and privacy
 
@@ -144,6 +146,7 @@ VERBOSE=1 node scripts/run-tests.cjs  # full output
 | Manifest V3 worker restarts, claims, duplicates, verified completion | `test-worker-restart.cjs` |
 | DRM detection and rejection (HLS, DASH, MP4 init, TS, EME) | `test-drm.cjs` |
 | YouTube classification and diagnostics | `test-youtube-engine.cjs` |
+| YouTube pipeline in real Chromium against a local YouTube simulation (optional, Playwright) | `test-youtube-e2e.cjs` |
 | 1.4.x regressions (scanner, conversion, popup race, YouTube WASM, messages) | the other `test-*.cjs` files |
 
 Optional suites (reported as **SKIP** when unavailable):

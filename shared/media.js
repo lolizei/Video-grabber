@@ -45,5 +45,14 @@ globalThis.MediaTools = (() => {
     return { url, kind, type: ['hls', 'dash', 'mss', 'hds'].includes(kind) ? 'playlist' : kind,
       filename: filename(basename), mime, size: Math.max(0, size), domain: u.hostname };
   }
-  return { classify, filename, httpUrl, header };
+  // URL safe for diagnostics: no credentials, signatures, tokens, session or client parameters.
+  const SAFE_PARAMS = new Set(['itag', 'mime', 'clen', 'dur', 'gir', 'keepalive', 'aitags', 'source']);
+  function redactUrl(value) {
+    try {
+      const u = new URL(value);
+      const kept = [...u.searchParams].filter(([k]) => SAFE_PARAMS.has(k.toLowerCase()));
+      return u.protocol + '//' + u.hostname + u.pathname + (kept.length ? '?' + new URLSearchParams(kept) : '') + (u.search && kept.length < [...u.searchParams].length ? ' (+' + ([...u.searchParams].length - kept.length) + ' private params removed)' : '');
+    } catch { return '(invalid URL)'; }
+  }
+  return { classify, filename, httpUrl, header, redactUrl };
 })();

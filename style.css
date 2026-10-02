@@ -87,3 +87,12 @@ body.page { padding: 32px 16px; }
 .scanner-item .meta + .meta { white-space: normal; }
 #speed { margin-top: 4px; font-size: 12px; }
 .page .actions { margin-top: 10px; }
+
+.subhead { font-size: 13px; margin: 18px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.stages { margin: 0; padding-left: 20px; font-size: 13px; }
+.stages li { background: none; border: 0; padding: 2px 0; margin: 0; }
+.stages li.failed { color: var(--accent); } .stages li.ok { color: var(--ok); }
+.diagnostics { margin-top: 12px; font-size: 12px; }
+.diagnostics pre, #youtube-diag-text { white-space: pre-wrap; word-break: break-all; font: 11px/1.4 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+#youtube-diag { margin-top: 8px; font-size: 12px; }
+#youtube-stage { font-weight: 600; margin: 6px 0 0; font-size: 12px; }
